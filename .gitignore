@@ -1,0 +1,49 @@
+# ─── Python ──────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+ENV/
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# ─── Environment / Secrets ───────────────────────────────────────────────────
+.env
+*.env
+!.env.example
+
+# ─── Database ─────────────────────────────────────────────────────────────────
+*.db
+*.sqlite3
+
+# ─── Uploads (user files — never commit) ────────────────────────────────────
+backend/uploads/
+
+# ─── Node / Frontend ─────────────────────────────────────────────────────────
+node_modules/
+frontend/.next/
+frontend/dist/
+frontend/build/
+.npm
+
+# ─── IDEs ────────────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# ─── Coverage / Testing ───────────────────────────────────────────────────────
+.coverage
+htmlcov/
+.pytest_cache/
+.mypy_cache/
+
+# ─── Docker ───────────────────────────────────────────────────────────────────
+*.log
