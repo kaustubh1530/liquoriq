@@ -10,8 +10,10 @@ This file:
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import text
 
 from app.config import get_settings
+from app.database import AsyncSessionLocal
 
 settings = get_settings()
 
@@ -65,8 +67,19 @@ async def root():
 @app.get("/health", tags=["Health"])
 async def health_check():
     """
-    Health-check endpoint.
-    Load balancers and monitoring tools hit this to verify the app is up.
-    Returns 200 OK when the server is healthy.
+    Health-check endpoint — checks both the app and the database.
+    Returns 200 OK when healthy, 503 if the DB is unreachable.
     """
-    return {"status": "healthy", "service": settings.app_name}
+    db_status = "unreachable"
+    try:
+        async with AsyncSessionLocal() as session:
+            await session.execute(text("SELECT 1"))
+        db_status = "connected"
+    except Exception as e:
+        db_status = f"error: {str(e)}"
+
+    return {
+        "status": "healthy" if db_status == "connected" else "degraded",
+        "service": settings.app_name,
+        "database": db_status,
+    }

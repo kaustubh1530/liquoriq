@@ -1,4 +1,4 @@
-# LiquorIQ 🥃
+# LiquorIQ 
 
 > **AI-powered growth intelligence platform for independent liquor stores.**
 
