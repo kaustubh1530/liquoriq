@@ -27,8 +27,8 @@ from app.config import get_settings
 from app.database import Base  # noqa: F401 — keeps metadata populated
 
 # Import all models so Alembic sees their table definitions.
-# Add new model imports here as we create them in later phases:
-# from app.models import user, store, upload, sales   ← Phase 3+
+# Add new model imports here as we create them in later phases.
+from app.models import user, store  # noqa: F401 — Phase 3
 
 settings_app = get_settings()
 

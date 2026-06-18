@@ -43,11 +43,9 @@ app.add_middleware(
 )
 
 # ─── Routers ─────────────────────────────────────────────────────────────────
-# We'll register routes here as we build each phase.
-# Example (Phase 3):
-#   from app.routes import auth, stores
-#   app.include_router(auth.router, prefix="/auth", tags=["Auth"])
-#   app.include_router(stores.router, prefix="/stores", tags=["Stores"])
+from app.routes import auth
+
+app.include_router(auth.router, prefix="/auth", tags=["Auth"])
 
 
 # ─── Root endpoints ───────────────────────────────────────────────────────────
