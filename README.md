@@ -129,9 +129,9 @@ Visit:
 | Phase | Description | Status |
 |---|---|---|
 | 1 | Project scaffold + FastAPI setup | ✅ Done |
-| 2 | PostgreSQL + SQLAlchemy + Alembic | 🔄 Next |
-| 3 | Authentication (register / login / me) | ⏳ Pending |
-| 4 | Report upload system | ⏳ Pending |
+| 2 | PostgreSQL + SQLAlchemy + Alembic | ✅ Done |
+| 3 | Authentication (register / login / me) | ✅ Done |
+| 4 | Report upload system | 🔄 Next |
 | 5 | CSV/Excel parser + data normalization | ⏳ Pending |
 | 6 | Analytics endpoints | ⏳ Pending |
 | 7 | AI promotion strategy generator | ⏳ Pending |
