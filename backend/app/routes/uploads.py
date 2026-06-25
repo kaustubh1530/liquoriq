@@ -151,3 +151,36 @@ async def get_upload(
         )
 
     return upload
+
+
+# ─── POST /uploads/{id}/parse ─────────────────────────────────────────────────
+
+@router.post(
+    "/{upload_id}/parse",
+    response_model=UploadResponse,
+    summary="Parse an uploaded report and store normalized sales data",
+)
+async def parse_upload(
+    upload_id: uuid.UUID,
+    current_store: Annotated[Store, Depends(get_current_store)],
+    db: AsyncSession = Depends(get_db),
+) -> UploadedReport:
+    """
+    Trigger parsing for an uploaded report.
+    Reads the file, normalizes rows into normalized_sales, updates status.
+    """
+    from app.services.parse_service import parse_upload as run_parse
+
+    try:
+        upload = await run_parse(
+            upload_id=upload_id,
+            store_id=current_store.id,
+            db=db,
+        )
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
+
+    return upload
