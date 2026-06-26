@@ -43,11 +43,12 @@ app.add_middleware(
 )
 
 # ─── Routers ─────────────────────────────────────────────────────────────────
-from app.routes import auth, stores, uploads
+from app.routes import auth, stores, uploads, analytics
 
 app.include_router(auth.router, prefix="/auth", tags=["Auth"])
 app.include_router(stores.router, prefix="/stores", tags=["Stores"])
 app.include_router(uploads.router, prefix="/uploads", tags=["Uploads"])
+app.include_router(analytics.router, prefix="/analytics", tags=["Analytics"])
 
 
 # ─── Root endpoints ───────────────────────────────────────────────────────────
