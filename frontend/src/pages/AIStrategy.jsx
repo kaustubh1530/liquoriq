@@ -1,0 +1,188 @@
+/**
+ * AIStrategy.jsx — Generate AI promotion strategies + view history
+ */
+
+import { useEffect, useState } from 'react'
+import { aiApi } from '../api/client'
+import Layout from '../components/Layout'
+import { Sparkles, ChevronDown, ChevronUp } from 'lucide-react'
+
+function StrategyCard({ s, defaultOpen = false }) {
+  const [open, setOpen] = useState(defaultOpen)
+
+  return (
+    <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+      {/* Header — always visible */}
+      <button
+        onClick={() => setOpen(!open)}
+        className="w-full flex items-center justify-between px-6 py-4 hover:bg-gray-50 transition-colors"
+      >
+        <div className="text-left">
+          <p className="font-semibold text-gray-900">{s.strategy_title}</p>
+          <p className="text-xs text-gray-400 mt-0.5">
+            {new Date(s.created_at).toLocaleString()} · {s.model_used}
+          </p>
+        </div>
+        {open ? <ChevronUp size={16} className="text-gray-400" /> : <ChevronDown size={16} className="text-gray-400" />}
+      </button>
+
+      {/* Expanded detail */}
+      {open && (
+        <div className="px-6 pb-6 space-y-5 border-t border-gray-100 pt-5">
+          <Section title="Products to promote">
+            <div className="flex flex-wrap gap-2">
+              {s.products_to_promote.map((p, i) => (
+                <span key={i} className="bg-brand-50 text-brand-700 text-xs font-medium px-3 py-1 rounded-full">{p}</span>
+              ))}
+            </div>
+          </Section>
+
+          <Section title="Why">
+            <p className="text-sm text-gray-700">{s.reason}</p>
+          </Section>
+
+          <Section title="Target customer">
+            <p className="text-sm text-gray-700">{s.target_customer_segment}</p>
+          </Section>
+
+          <Section title="Recommended offer">
+            <p className="text-sm font-medium text-gray-900 bg-green-50 p-3 rounded-xl">{s.recommended_offer}</p>
+          </Section>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <CopyBox label="📱 SMS" text={s.sms_copy} />
+            <CopyBox label="✉️ Email subject" text={s.email_subject} />
+            <CopyBox label="📸 Social caption" text={s.social_caption} />
+          </div>
+
+          <Section title="Email body">
+            <p className="text-sm text-gray-700 bg-gray-50 p-4 rounded-xl">{s.email_body}</p>
+          </Section>
+
+          <Section title="Expected impact">
+            <p className="text-sm text-gray-700">{s.expected_impact}</p>
+          </Section>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function Section({ title, children }) {
+  return (
+    <div>
+      <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">{title}</p>
+      {children}
+    </div>
+  )
+}
+
+function CopyBox({ label, text }) {
+  const [copied, setCopied] = useState(false)
+  const copy = () => {
+    navigator.clipboard.writeText(text)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 1500)
+  }
+  return (
+    <div className="bg-gray-50 rounded-xl p-4">
+      <div className="flex items-center justify-between mb-2">
+        <p className="text-xs font-semibold text-gray-500">{label}</p>
+        <button onClick={copy} className="text-xs text-brand-500 hover:underline">{copied ? 'Copied!' : 'Copy'}</button>
+      </div>
+      <p className="text-sm text-gray-700 leading-relaxed">{text}</p>
+    </div>
+  )
+}
+
+export default function AIStrategy() {
+  const [strategies, setStrategies] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [generating, setGenerating] = useState(false)
+  const [error, setError] = useState('')
+  const [limit, setLimit] = useState(5)
+
+  const load = async () => {
+    try {
+      const { data } = await aiApi.list()
+      setStrategies(data)
+    } catch {
+      // ignore
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => { load() }, [])
+
+  const handleGenerate = async () => {
+    setError('')
+    setGenerating(true)
+    try {
+      await aiApi.generate(limit)
+      await load()
+    } catch (err) {
+      setError(err.response?.data?.detail ?? 'Failed to generate strategy.')
+    } finally {
+      setGenerating(false)
+    }
+  }
+
+  return (
+    <Layout>
+      <div className="max-w-3xl mx-auto">
+        <h1 className="text-2xl font-bold text-gray-900 mb-1">AI Strategy</h1>
+        <p className="text-sm text-gray-500 mb-8">
+          Generate AI-powered promotion campaigns based on your slowest-selling products
+        </p>
+
+        {/* Generate panel */}
+        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6 mb-8">
+          <div className="flex items-center gap-3 mb-4">
+            <Sparkles size={20} className="text-brand-500" />
+            <h2 className="text-sm font-semibold text-gray-700">Generate new strategy</h2>
+          </div>
+          {error && <div className="mb-4 p-3 rounded-xl bg-red-50 text-red-600 text-sm">{error}</div>}
+          <div className="flex items-center gap-4">
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">Products to analyze</label>
+              <select
+                value={limit}
+                onChange={(e) => setLimit(Number(e.target.value))}
+                className="border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
+              >
+                {[3, 5, 8, 10].map((n) => <option key={n} value={n}>{n} slowest products</option>)}
+              </select>
+            </div>
+            <button
+              onClick={handleGenerate}
+              disabled={generating}
+              className="flex items-center gap-2 bg-brand-500 hover:bg-brand-600 text-white font-semibold px-5 py-2.5 rounded-xl text-sm transition-colors disabled:opacity-60 mt-4"
+            >
+              <Sparkles size={16} />
+              {generating ? 'Generating… (5-10s)' : 'Generate strategy'}
+            </button>
+          </div>
+        </div>
+
+        {/* Strategy history */}
+        <h2 className="text-sm font-semibold text-gray-700 mb-4">Past strategies</h2>
+        {loading ? (
+          <p className="text-gray-400 text-sm">Loading…</p>
+        ) : strategies.length === 0 ? (
+          <div className="bg-white rounded-2xl border border-gray-100 p-10 text-center">
+            <p className="text-3xl mb-3">🤖</p>
+            <p className="text-gray-600 font-medium">No strategies yet</p>
+            <p className="text-gray-400 text-sm mt-1">Click Generate above to create your first promotion campaign.</p>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            {strategies.map((s, i) => (
+              <StrategyCard key={s.id} s={s} defaultOpen={i === 0} />
+            ))}
+          </div>
+        )}
+      </div>
+    </Layout>
+  )
+}

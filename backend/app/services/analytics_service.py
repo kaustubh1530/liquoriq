@@ -174,19 +174,19 @@ async def get_category_performance(
 
     result = await db.execute(
         select(
-            func.coalesce(NormalizedSale.category, "Uncategorized").label("category"),
+            NormalizedSale.category,
             func.coalesce(func.sum(NormalizedSale.total_amount), 0).label("total_revenue"),
             func.coalesce(func.sum(NormalizedSale.quantity), 0).label("total_units"),
             func.count(NormalizedSale.product_name.distinct()).label("product_count"),
         )
         .where(NormalizedSale.store_id == store_id)
-        .group_by(func.coalesce(NormalizedSale.category, "Uncategorized"))
+        .group_by(NormalizedSale.category)
         .order_by(func.sum(NormalizedSale.total_amount).desc().nulls_last())
     )
 
     return [
         {
-            "category": row.category,
+            "category": row.category or "Uncategorized",
             "total_revenue": round(_safe_float(row.total_revenue), 2),
             "total_units": round(_safe_float(row.total_units), 2),
             "product_count": row.product_count,

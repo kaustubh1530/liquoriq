@@ -38,7 +38,7 @@ from app.services.parsers.base_parser import BaseParser
 # open the file, look at the header row, and update these values to match exactly.
 
 COLUMN_MAP = {
-    "product_name":   ["description", "item description", "item name", "dept description"],
+    "product_name":   ["description", "item description", "item name", "dept description", "product name", "product"],
     "sku":            ["upc", "item code", "plu", "barcode"],
     "category":       ["dept", "department", "category"],
     "quantity":       ["qty sold", "qty", "quantity sold", "quantity"],
