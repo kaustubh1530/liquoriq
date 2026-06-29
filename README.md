@@ -131,11 +131,11 @@ Visit:
 | 1 | Project scaffold + FastAPI setup | ✅ Done |
 | 2 | PostgreSQL + SQLAlchemy + Alembic | ✅ Done |
 | 3 | Authentication (register / login / me) | ✅ Done |
-| 4 | Report upload system | 🔄 Next |
-| 5 | CSV/Excel parser + data normalization | ⏳ Pending |
-| 6 | Analytics endpoints | ⏳ Pending |
-| 7 | AI promotion strategy generator | ⏳ Pending |
-| 8 | React frontend dashboard | ⏳ Pending |
+| 4 | Report upload system | ✅ Done |
+| 5 | CSV/Excel parser + data normalization | ✅ Done |
+| 6 | Analytics endpoints | ✅ Done |
+| 7 | AI promotion strategy generator | ✅ Done |
+| 8 | React frontend dashboard | ✅ Done |
 | 9 | AI weekly growth report | ⏳ Pending |
 | 10 | Polish, README, screenshots, deploy | ⏳ Pending |
 
