@@ -32,6 +32,13 @@ class Settings(BaseSettings):
     upload_dir: str = "uploads"
     max_upload_size_mb: int = 20
 
+    # ── Email (Gmail SMTP) ────────────────────────────────────────────────────
+    smtp_host: str = "smtp.gmail.com"
+    smtp_port: int = 587
+    smtp_user: str = ""           # your-gmail@gmail.com
+    smtp_password: str = ""       # Gmail App Password (16 chars, no spaces)
+    from_email: str = ""          # same as smtp_user usually
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
