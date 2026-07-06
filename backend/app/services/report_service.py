@@ -13,6 +13,7 @@ Called by:
 """
 
 import logging
+import math
 import uuid
 from datetime import datetime, timezone
 
@@ -31,6 +32,31 @@ from app.services.openai_service import generate_json_response
 from app.services.email_service import send_html_email
 
 logger = logging.getLogger(__name__)
+
+
+# ─── NaN sanitizer ────────────────────────────────────────────────────────────
+
+def _safe_float(val, default: float = 0.0) -> float:
+    """Return 0.0 if val is None or NaN (happens when CSV has no price column)."""
+    if val is None:
+        return default
+    try:
+        f = float(val)
+        return default if math.isnan(f) or math.isinf(f) else f
+    except (TypeError, ValueError):
+        return default
+
+
+def _sanitize_summary(summary: dict) -> dict:
+    for key in ("total_revenue", "average_order_value", "total_units"):
+        summary[key] = _safe_float(summary.get(key))
+    return summary
+
+
+def _sanitize_products(products: list[dict]) -> list[dict]:
+    for p in products:
+        p["total_revenue"] = _safe_float(p.get("total_revenue"))
+    return products
 
 
 # ─── AI narrative generator ────────────────────────────────────────────────────
@@ -254,9 +280,9 @@ async def send_weekly_report_for_store(
 
     try:
         # Gather analytics
-        summary      = await get_summary(store_id=store_id, db=db)
-        top_products = await get_top_products(store_id=store_id, db=db, limit=5)
-        slow_products = await get_slow_products(store_id=store_id, db=db, limit=5)
+        summary      = _sanitize_summary(await get_summary(store_id=store_id, db=db))
+        top_products = _sanitize_products(await get_top_products(store_id=store_id, db=db, limit=5))
+        slow_products = _sanitize_products(await get_slow_products(store_id=store_id, db=db, limit=5))
 
         if summary["total_orders"] == 0:
             return {
