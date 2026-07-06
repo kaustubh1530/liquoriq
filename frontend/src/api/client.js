@@ -12,12 +12,19 @@
 
 import axios from 'axios'
 
-// Base URL: in dev, Vite proxy forwards /auth → localhost:8000/auth
-// In production, change this to your deployed API URL
+// Base URL:
+//   dev  — empty string → relative URLs → Vite proxy forwards to localhost:8000
+//   prod — VITE_API_URL env var on Vercel, e.g. https://liquoriq.up.railway.app
+export const API_BASE = import.meta.env.VITE_API_URL ?? ''
+
 const api = axios.create({
-  baseURL: '/',
+  baseURL: API_BASE || '/',
   headers: { 'Content-Type': 'application/json' },
 })
+
+// For non-axios assets (e.g. <img src> of generated ad images, which the
+// backend returns as relative paths like /static/creatives/<uuid>.png)
+export const assetUrl = (path) => `${API_BASE}${path}`
 
 // ── Auth token injection ──────────────────────────────────────────────────────
 // Token is stored in sessionStorage so it survives Vite HMR reloads.

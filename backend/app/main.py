@@ -54,9 +54,16 @@ app = FastAPI(
 
 # ─── CORS ────────────────────────────────────────────────────────────────────
 
+# In dev: allow everything. In prod: only the deployed frontend (FRONTEND_URL
+# env var on Railway, e.g. https://liquoriq.vercel.app — no trailing slash).
+_allowed_origins = (
+    ["*"] if settings.debug
+    else [o for o in [settings.frontend_url] if o]
+)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"] if settings.debug else ["https://yourdomain.com"],
+    allow_origins=_allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

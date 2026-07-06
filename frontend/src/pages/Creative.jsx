@@ -10,7 +10,7 @@
 
 import { useEffect, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { aiApi, creativeApi } from '../api/client'
+import { aiApi, creativeApi, assetUrl } from '../api/client'
 import Layout from '../components/Layout'
 import { Megaphone, Download, RefreshCw, Image as ImageIcon } from 'lucide-react'
 
@@ -160,7 +160,7 @@ export default function Creative() {
             {/* Image card */}
             <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
               <img
-                src={creative.image_url}
+                src={assetUrl(creative.image_url)}
                 alt="Generated ad creative"
                 className="w-full aspect-square object-cover"
               />
@@ -169,7 +169,7 @@ export default function Creative() {
                   {new Date(creative.created_at).toLocaleString()} · {creative.model_used} · 1024×1024
                 </p>
                 <a
-                  href={creative.image_url}
+                  href={assetUrl(creative.image_url)}
                   download="liquoriq-ad.png"
                   className="flex items-center gap-1.5 text-xs font-semibold text-brand-500 hover:underline"
                 >

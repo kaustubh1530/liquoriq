@@ -6,8 +6,10 @@ Every setting has a sane default for local dev; production
 values are injected via real environment variables.
 """
 
-from pydantic_settings import BaseSettings, SettingsConfigDict
 from functools import lru_cache
+
+from pydantic import field_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
@@ -16,8 +18,26 @@ class Settings(BaseSettings):
     app_env: str = "development"
     debug: bool = True
 
+    # ── CORS (production) ─────────────────────────────────────────────────────
+    # Set to the deployed frontend origin, e.g. https://liquoriq.vercel.app
+    frontend_url: str = ""
+
     # ── Database ─────────────────────────────────────────────────────────────
     database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/liquoriq"
+
+    @field_validator("database_url")
+    @classmethod
+    def _force_asyncpg_driver(cls, v: str) -> str:
+        """
+        Railway (and most PaaS) inject DATABASE_URL as plain postgresql://
+        SQLAlchemy would then use the sync psycopg2 driver and crash our
+        async engine. Rewrite the scheme so asyncpg is always used.
+        """
+        if v.startswith("postgresql://"):
+            return v.replace("postgresql://", "postgresql+asyncpg://", 1)
+        if v.startswith("postgres://"):  # legacy Heroku-style scheme
+            return v.replace("postgres://", "postgresql+asyncpg://", 1)
+        return v
 
     # ── JWT Auth ──────────────────────────────────────────────────────────────
     secret_key: str = "change-me-in-production"
@@ -27,7 +47,7 @@ class Settings(BaseSettings):
     # ── OpenAI ───────────────────────────────────────────────────────────────
     openai_api_key: str = ""
     openai_model: str = "gpt-4o"
-    openai_image_model: str = "dall-e-3"
+    openai_image_model: str = "gpt-image-1"   # successor to DALL-E 3; always returns b64
 
     # ── Ad creatives ──────────────────────────────────────────────────────────
     creatives_dir: str = "generated_images"   # DALL-E PNGs saved here, served at /static/creatives

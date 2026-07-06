@@ -71,30 +71,34 @@ async def generate_json_response(system_prompt: str, user_prompt: str) -> dict:
 
 async def generate_image(prompt: str, size: str = "1024x1024") -> bytes:
     """
-    Call DALL-E 3 and return the raw PNG bytes.
+    Call the OpenAI Images API and return the raw PNG bytes.
 
-    Key decisions:
-      - response_format="b64_json": the alternative ("url") returns a link that
-        expires after ~1 hour. We need the actual bytes so we can persist the
-        image ourselves and serve it forever.
-      - quality="standard": $0.04/image vs $0.08 for "hd" — standard is plenty
-        for social media ads.
-      - n=1: DALL-E 3 only supports one image per request anyway.
+    Model compatibility (this bit us in Phase 10):
+      - gpt-image-1 (current, default): ALWAYS returns base64. It rejects the
+        legacy response_format param with 400 "Unknown parameter", and its
+        quality values are low/medium/high/auto — not "standard".
+      - dall-e-3/dall-e-2 (legacy): need response_format="b64_json" explicitly,
+        otherwise they return a URL that expires after ~1 hour.
+    We branch on the configured model so either works from .env.
 
     Raises:
         RuntimeError — for OpenAI API errors (connection, rate limit, status,
                        including content-policy rejections of the prompt)
         ValueError   — if the response contains no image data
     """
+    kwargs = {
+        "model": settings.openai_image_model,   # "gpt-image-1" from config
+        "prompt": prompt,
+        "size": size,
+        "n": 1,
+    }
+    if settings.openai_image_model.startswith("dall-e"):
+        # Legacy-only params — gpt-image-1 rejects these with a 400
+        kwargs["response_format"] = "b64_json"
+        kwargs["quality"] = "standard"
+
     try:
-        response = await _client.images.generate(
-            model=settings.openai_image_model,   # "dall-e-3" from config
-            prompt=prompt,
-            size=size,
-            quality="standard",
-            n=1,
-            response_format="b64_json",
-        )
+        response = await _client.images.generate(**kwargs)
     except APIConnectionError as e:
         logger.error("DALL-E connection error: %s", e)
         raise RuntimeError(f"Could not connect to OpenAI: {e}") from e
