@@ -10,6 +10,9 @@ export default defineConfig({
       '/uploads':   'http://localhost:8000',
       '/analytics': 'http://localhost:8000',
       '/ai':        'http://localhost:8000',
+      '/creative':  'http://localhost:8000',
+      '/static':    'http://localhost:8000',
+      '/reports':   'http://localhost:8000',
     },
   },
 })

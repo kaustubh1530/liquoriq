@@ -27,6 +27,10 @@ class Settings(BaseSettings):
     # ── OpenAI ───────────────────────────────────────────────────────────────
     openai_api_key: str = ""
     openai_model: str = "gpt-4o"
+    openai_image_model: str = "dall-e-3"
+
+    # ── Ad creatives ──────────────────────────────────────────────────────────
+    creatives_dir: str = "generated_images"   # DALL-E PNGs saved here, served at /static/creatives
 
     # ── File Uploads ──────────────────────────────────────────────────────────
     upload_dir: str = "uploads"

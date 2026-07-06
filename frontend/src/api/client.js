@@ -95,4 +95,13 @@ export const aiApi = {
   get: (id) => api.get(`/ai/strategies/${id}`),
 }
 
+// ── Ad Creative endpoints ─────────────────────────────────────────────────────
+
+export const creativeApi = {
+  // DALL-E 3 + GPT-4o — slow call, 15-30s
+  generate: (strategyId) => api.post('/creative/generate', { strategy_id: strategyId }),
+  // Latest creative for a strategy — 404 if none generated yet
+  get: (strategyId) => api.get(`/creative/${strategyId}`),
+}
+
 export default api

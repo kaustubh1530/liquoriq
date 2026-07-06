@@ -25,6 +25,9 @@ build/
 # ─── Uploads (user files — never commit) ────────────────────────────────────
 backend/uploads/
 
+# ─── Generated ad images (DALL-E output — never commit) ──────────────────────
+backend/generated_images/
+
 # ─── Node / Frontend ─────────────────────────────────────────────────────────
 node_modules/
 frontend/.next/

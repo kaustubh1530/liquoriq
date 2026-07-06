@@ -3,9 +3,10 @@
  */
 
 import { useEffect, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { aiApi } from '../api/client'
 import Layout from '../components/Layout'
-import { Sparkles, ChevronDown, ChevronUp } from 'lucide-react'
+import { Sparkles, ChevronDown, ChevronUp, Megaphone } from 'lucide-react'
 
 function StrategyCard({ s, defaultOpen = false }) {
   const [open, setOpen] = useState(defaultOpen)
@@ -62,6 +63,15 @@ function StrategyCard({ s, defaultOpen = false }) {
           <Section title="Expected impact">
             <p className="text-sm text-gray-700">{s.expected_impact}</p>
           </Section>
+
+          {/* Phase 10 — jump to Ad Creative studio with this strategy pre-selected */}
+          <Link
+            to={`/creative?strategy=${s.id}`}
+            className="inline-flex items-center gap-2 bg-brand-50 hover:bg-brand-100 text-brand-600 font-semibold px-4 py-2.5 rounded-xl text-sm transition-colors"
+          >
+            <Megaphone size={15} />
+            Create ad creative →
+          </Link>
         </div>
       )}
     </div>

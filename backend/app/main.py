@@ -10,9 +10,11 @@ This file:
 """
 
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 
 from app.config import get_settings
@@ -60,14 +62,25 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# ─── Static files (DALL-E ad images) ─────────────────────────────────────────
+# Generated PNGs live on disk in settings.creatives_dir and are served at
+# /static/creatives/<uuid>.png — the URL stored in ad_creatives.image_url.
+Path(settings.creatives_dir).mkdir(parents=True, exist_ok=True)
+app.mount(
+    "/static/creatives",
+    StaticFiles(directory=settings.creatives_dir),
+    name="creatives",
+)
+
 # ─── Routers ─────────────────────────────────────────────────────────────────
-from app.routes import auth, stores, uploads, analytics, ai, reports  # noqa: E402
+from app.routes import auth, stores, uploads, analytics, ai, creative, reports  # noqa: E402
 
 app.include_router(auth.router,      prefix="/auth",      tags=["Auth"])
 app.include_router(stores.router,    prefix="/stores",    tags=["Stores"])
 app.include_router(uploads.router,   prefix="/uploads",   tags=["Uploads"])
 app.include_router(analytics.router, prefix="/analytics", tags=["Analytics"])
 app.include_router(ai.router,        prefix="/ai",        tags=["AI"])
+app.include_router(creative.router,  prefix="/creative",  tags=["Creative"])
 app.include_router(reports.router,   prefix="/reports",   tags=["Reports"])
 
 

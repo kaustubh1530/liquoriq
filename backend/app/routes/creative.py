@@ -1,0 +1,82 @@
+"""
+routes/creative.py — Ad Creative endpoints (Phase 10)
+
+POST /creative/generate        — Generate image + platform copy for a strategy
+GET  /creative/{strategy_id}   — Latest creative package for that strategy
+
+Both require JWT auth. Generation calls GPT-4o AND DALL-E 3 —
+expect 15-30s response time (DALL-E is the slow part).
+"""
+
+import uuid
+from typing import Annotated
+
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.database import get_db
+from app.models.store import Store
+from app.routes.stores import get_current_store
+from app.schemas.creative import CreativeResponse, GenerateCreativeRequest
+from app.services.creative_service import (
+    generate_ad_creative,
+    get_latest_creative_for_strategy,
+)
+
+router = APIRouter()
+
+
+@router.post(
+    "/generate",
+    response_model=CreativeResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Generate ad image + platform copy for a strategy",
+    description=(
+        "Takes an existing AI strategy, generates a DALL-E 3 ad image plus "
+        "copy tailored for Instagram, Facebook, Uber Eats, DoorDash, and a "
+        "website banner. Takes 15-30 seconds. Regenerating creates a new "
+        "version; GET returns the newest."
+    ),
+)
+async def generate_creative(
+    body: GenerateCreativeRequest,
+    current_store: Annotated[Store, Depends(get_current_store)],
+    db: AsyncSession = Depends(get_db),
+) -> CreativeResponse:
+    try:
+        creative = await generate_ad_creative(
+            strategy_id=body.strategy_id,
+            store_id=current_store.id,
+            db=db,
+        )
+    except ValueError as e:
+        # Strategy not found → 404; bad AI output → 422
+        if "not found" in str(e).lower():
+            raise HTTPException(status.HTTP_404_NOT_FOUND, detail=str(e))
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(e))
+    except RuntimeError as e:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, detail=str(e))
+    return creative
+
+
+@router.get(
+    "/{strategy_id}",
+    response_model=CreativeResponse,
+    summary="Latest creative package for a strategy",
+)
+async def get_creative(
+    strategy_id: uuid.UUID,
+    current_store: Annotated[Store, Depends(get_current_store)],
+    db: AsyncSession = Depends(get_db),
+) -> CreativeResponse:
+    creative = await get_latest_creative_for_strategy(
+        strategy_id=strategy_id,
+        store_id=current_store.id,
+        db=db,
+    )
+    if not creative:
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            detail="No creative generated for this strategy yet",
+        )
+    return creative

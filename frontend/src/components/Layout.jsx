@@ -8,6 +8,7 @@ import {
   LayoutDashboard,
   Upload,
   Sparkles,
+  Megaphone,
   Store,
   LogOut,
 } from 'lucide-react'
@@ -17,6 +18,7 @@ const NAV = [
   { to: '/dashboard',  label: 'Dashboard',   icon: LayoutDashboard },
   { to: '/uploads',    label: 'Uploads',      icon: Upload },
   { to: '/ai',         label: 'AI Strategy',  icon: Sparkles },
+  { to: '/creative',   label: 'Ad Creative',  icon: Megaphone },
 ]
 
 export default function Layout({ children }) {
