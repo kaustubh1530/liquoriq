@@ -13,6 +13,8 @@ How JWT works in LiquorIQ:
   - If token is expired or tampered with → 401 Unauthorized
 """
 
+import hashlib
+import logging
 from datetime import datetime, timedelta, timezone
 
 from jose import JWTError, jwt
@@ -20,7 +22,17 @@ from passlib.context import CryptContext
 
 from app.config import get_settings
 
+logger = logging.getLogger(__name__)
 settings = get_settings()
+
+# Log a fingerprint (NOT the key itself) at import so we can verify every
+# process is using the same SECRET_KEY. If two log lines ever show different
+# fingerprints, two processes are running with different configs.
+logger.warning(
+    "JWT config loaded: alg=%s key_fp=%s",
+    settings.algorithm,
+    hashlib.sha256(settings.secret_key.encode()).hexdigest()[:10],
+)
 
 # ─── Password hashing ─────────────────────────────────────────────────────────
 # bcrypt is the industry standard — it's intentionally slow to resist brute force.
@@ -74,5 +86,8 @@ def decode_access_token(token: str) -> dict | None:
             algorithms=[settings.algorithm],
         )
         return payload
-    except JWTError:
+    except JWTError as e:
+        # Log WHY validation failed (expired vs bad signature vs malformed).
+        # Without this, every failure is an indistinguishable 401.
+        logger.warning("JWT decode failed: %s: %s", type(e).__name__, e)
         return None
