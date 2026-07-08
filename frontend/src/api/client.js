@@ -22,9 +22,12 @@ const api = axios.create({
   headers: { 'Content-Type': 'application/json' },
 })
 
-// For non-axios assets (e.g. <img src> of generated ad images, which the
-// backend returns as relative paths like /static/creatives/<uuid>.png)
-export const assetUrl = (path) => `${API_BASE}${path}`
+// For non-axios assets (<img src> of generated ad images).
+// Two URL shapes come from the backend:
+//   - absolute (Cloudinary CDN, prod): use as-is
+//   - relative (/static/creatives/..., local dev): prepend the API base
+export const assetUrl = (path) =>
+  path?.startsWith('http') ? path : `${API_BASE}${path}`
 
 // ── Auth token injection ──────────────────────────────────────────────────────
 // Token is stored in sessionStorage so it survives Vite HMR reloads.
