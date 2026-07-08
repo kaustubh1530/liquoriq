@@ -38,9 +38,10 @@ if _CLOUDINARY_ENABLED:
 
     # cloudinary:// URL carries cloud_name + key + secret in one string
     cloudinary.config(cloudinary_url=settings.cloudinary_url, secure=True)
-    logger.info("Storage backend: Cloudinary")
+    # warning level so it's visible in default (unconfigured) logging, same as the JWT line
+    logger.warning("Storage backend: Cloudinary")
 else:
-    logger.info("Storage backend: local disk (%s)", settings.creatives_dir)
+    logger.warning("Storage backend: local disk (%s)", settings.creatives_dir)
 
 
 async def save_image(png_bytes: bytes, prefix: str = "ad") -> str:
