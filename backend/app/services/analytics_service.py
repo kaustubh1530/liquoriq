@@ -15,6 +15,7 @@ Why keep queries here instead of in the route?
 All queries are scoped to store_id so one store can never see another's data.
 """
 
+import math
 import uuid
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -25,9 +26,15 @@ from app.models.normalized_sale import NormalizedSale
 # ─── Helper ───────────────────────────────────────────────────────────────────
 
 def _safe_float(value) -> float:
-    """Convert Decimal or None to float safely."""
+    """
+    Convert Decimal or None to float safely.
+    Also flattens NaN/inf to 0.0 — Postgres numeric columns can store NaN,
+    and a single NaN poisons any SUM() it's part of, which then crashes
+    FastAPI's JSON encoder ("Out of range float values are not JSON compliant").
+    """
     try:
-        return float(value) if value is not None else 0.0
+        result = float(value) if value is not None else 0.0
+        return result if math.isfinite(result) else 0.0
     except (TypeError, ValueError):
         return 0.0
 

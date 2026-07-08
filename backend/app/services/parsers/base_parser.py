@@ -26,6 +26,7 @@ This pattern means the parse_service.py doesn't care which parser it's
 using — it just calls parse() and saves the results.
 """
 
+import math
 from abc import ABC, abstractmethod
 
 
@@ -49,12 +50,23 @@ class BaseParser(ABC):
         ...
 
     def _safe_float(self, value) -> float | None:
-        """Convert a value to float safely, stripping $ , % characters."""
+        """
+        Convert a value to float safely, stripping $ , % characters.
+
+        NaN gotcha (found in Phase 12): pandas gives empty cells as
+        float('nan'), and float("nan") parses SUCCESSFULLY — so NaN used to
+        slip through here into Postgres (numeric columns accept NaN!) and
+        later poison SUM() aggregates, crashing JSON serialization.
+        Non-finite values now return None.
+        """
         if value is None:
             return None
         try:
             cleaned = str(value).replace("$", "").replace(",", "").replace("%", "").strip()
-            return float(cleaned) if cleaned else None
+            if not cleaned:
+                return None
+            result = float(cleaned)
+            return result if math.isfinite(result) else None
         except (ValueError, TypeError):
             return None
 

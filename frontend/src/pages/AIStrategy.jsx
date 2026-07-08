@@ -6,7 +6,96 @@ import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { aiApi } from '../api/client'
 import Layout from '../components/Layout'
-import { Sparkles, ChevronDown, ChevronUp, Megaphone } from 'lucide-react'
+import { Sparkles, ChevronDown, ChevronUp, Megaphone, TrendingUp, TrendingDown } from 'lucide-react'
+
+// ── Phase 12: campaign ROI section (lazy-loaded when a card is expanded) ──────
+function CampaignPerformance({ strategyId }) {
+  const [perf, setPerf] = useState(null)
+  const [failed, setFailed] = useState(false)
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const { data } = await aiApi.performance(strategyId)
+        setPerf(data)
+      } catch {
+        setFailed(true)
+      }
+    })()
+  }, [strategyId])
+
+  if (failed) return null
+  if (!perf) return <p className="text-xs text-gray-400">Loading campaign performance…</p>
+
+  if (perf.status === 'no_baseline') {
+    return (
+      <p className="text-xs text-gray-400">
+        Not enough sales history before this campaign to measure lift. Upload more
+        reports covering earlier dates, or check back on your next campaign.
+      </p>
+    )
+  }
+
+  const up = (perf.total_units_lift_pct ?? 0) >= 0
+  const Arrow = up ? TrendingUp : TrendingDown
+
+  return (
+    <div>
+      {/* Status + headline numbers */}
+      <div className="flex items-center gap-3 flex-wrap mb-3">
+        <span className={`text-xs font-semibold px-2.5 py-1 rounded-full ${
+          perf.status === 'complete' ? 'bg-gray-100 text-gray-600' : 'bg-blue-50 text-blue-600'
+        }`}>
+          {perf.status === 'complete'
+            ? 'Campaign complete'
+            : `Measuring — day ${perf.days_elapsed} of ${perf.campaign_window_days}`}
+        </span>
+        {perf.status === 'measuring' && perf.days_elapsed <= 3 && (
+          <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-amber-50 text-amber-600">
+            early estimate — few days of data
+          </span>
+        )}
+        {perf.total_units_lift_pct !== null && (
+          <span className={`flex items-center gap-1.5 text-sm font-bold ${up ? 'text-green-600' : 'text-red-500'}`}>
+            <Arrow size={16} />
+            {perf.total_units_lift_pct > 0 ? '+' : ''}{perf.total_units_lift_pct}% units
+          </span>
+        )}
+        {perf.total_revenue_lift !== null && (
+          <span className={`text-sm font-bold ${perf.total_revenue_lift >= 0 ? 'text-green-600' : 'text-red-500'}`}>
+            {perf.total_revenue_lift >= 0 ? '+' : '−'}${Math.abs(perf.total_revenue_lift).toFixed(2)} revenue
+          </span>
+        )}
+      </div>
+
+      {/* Per-product rows */}
+      <div className="space-y-1.5">
+        {perf.products.map((p) => (
+          <div key={p.product_name} className="flex items-center justify-between text-xs bg-gray-50 rounded-lg px-3 py-2">
+            <span className="text-gray-700 truncate mr-3">{p.product_name}</span>
+            <span className="flex items-center gap-3 shrink-0">
+              <span className="text-gray-400">
+                {p.baseline_weekly_units}/wk → {p.campaign_weekly_units}/wk
+              </span>
+              {p.units_lift_pct !== null ? (
+                <span className={`font-semibold ${p.units_lift_pct >= 0 ? 'text-green-600' : 'text-red-500'}`}>
+                  {p.units_lift_pct > 0 ? '+' : ''}{p.units_lift_pct}%
+                </span>
+              ) : (
+                <span className="text-gray-300">no baseline</span>
+              )}
+            </span>
+          </div>
+        ))}
+      </div>
+
+      <p className="text-[10px] text-gray-300 mt-2">
+        Weekly sales rate during the campaign vs the {perf.baseline_window_days}-day baseline
+        before it. Updates as you upload new reports.
+      </p>
+    </div>
+  )
+}
 
 function StrategyCard({ s, defaultOpen = false }) {
   const [open, setOpen] = useState(defaultOpen)
@@ -62,6 +151,11 @@ function StrategyCard({ s, defaultOpen = false }) {
 
           <Section title="Expected impact">
             <p className="text-sm text-gray-700">{s.expected_impact}</p>
+          </Section>
+
+          {/* Phase 12 — measured campaign ROI (the proof) */}
+          <Section title="Campaign performance">
+            <CampaignPerformance strategyId={s.id} />
           </Section>
 
           {/* Phase 10 — jump to Ad Creative studio with this strategy pre-selected */}

@@ -55,6 +55,10 @@ class Settings(BaseSettings):
     # Empty = local disk storage (dev default).
     cloudinary_url: str = ""
 
+    # ── Campaign ROI tracking (Phase 12) ──────────────────────────────────────
+    baseline_window_days: int = 28   # sales history BEFORE strategy creation = baseline
+    campaign_window_days: int = 14   # measurement window AFTER strategy creation
+
     # ── File Uploads ──────────────────────────────────────────────────────────
     upload_dir: str = "uploads"
     max_upload_size_mb: int = 20

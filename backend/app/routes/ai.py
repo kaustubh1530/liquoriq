@@ -18,11 +18,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.models.store import Store
 from app.routes.stores import get_current_store
+from app.schemas.campaign import CampaignPerformanceResponse
 from app.schemas.strategy import (
     GeneratePromotionRequest,
     StrategyListItem,
     StrategyResponse,
 )
+from app.services.campaign_service import get_campaign_performance
 from app.services.strategy_service import (
     generate_promotion_strategy,
     get_all_strategies,
@@ -77,6 +79,32 @@ async def list_strategies(
     db: AsyncSession = Depends(get_db),
 ) -> list[StrategyListItem]:
     return await get_all_strategies(store_id=current_store.id, db=db)
+
+
+@router.get(
+    "/strategies/{strategy_id}/performance",
+    response_model=CampaignPerformanceResponse,
+    summary="Campaign ROI: sales lift of promoted products vs pre-campaign baseline",
+    description=(
+        "Compares the promoted products' weekly sales rate during the campaign "
+        "window (14 days after strategy creation) against their 28-day baseline "
+        "before it. Derived live from normalized_sales — upload fresh reports "
+        "to update the numbers. Correlation, not causation."
+    ),
+)
+async def get_strategy_performance(
+    strategy_id: uuid.UUID,
+    current_store: Annotated[Store, Depends(get_current_store)],
+    db: AsyncSession = Depends(get_db),
+) -> CampaignPerformanceResponse:
+    try:
+        return await get_campaign_performance(
+            strategy_id=strategy_id,
+            store_id=current_store.id,
+            db=db,
+        )
+    except ValueError as e:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail=str(e))
 
 
 @router.get(

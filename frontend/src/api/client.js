@@ -103,6 +103,8 @@ export const aiApi = {
   generate: (limit = 5) => api.post('/ai/generate-promotion', { limit }),
   list: () => api.get('/ai/strategies'),
   get: (id) => api.get(`/ai/strategies/${id}`),
+  // Phase 12: campaign ROI — lift vs pre-campaign baseline, derived live
+  performance: (id) => api.get(`/ai/strategies/${id}/performance`),
 }
 
 // ── Ad Creative endpoints ─────────────────────────────────────────────────────
