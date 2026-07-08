@@ -17,10 +17,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.models.store import Store
 from app.routes.stores import get_current_store
-from app.schemas.creative import CreativeResponse, GenerateCreativeRequest
+from app.schemas.creative import (
+    ComposeRequest,
+    CreativeResponse,
+    GenerateCreativeRequest,
+    PriceSuggestion,
+)
 from app.services.creative_service import (
+    compose_final_creative,
     generate_ad_creative,
     get_latest_creative_for_strategy,
+    get_price_suggestions,
 )
 
 router = APIRouter()
@@ -51,6 +58,63 @@ async def generate_creative(
         )
     except ValueError as e:
         # Strategy not found → 404; bad AI output → 422
+        if "not found" in str(e).lower():
+            raise HTTPException(status.HTTP_404_NOT_FOUND, detail=str(e))
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(e))
+    except RuntimeError as e:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, detail=str(e))
+    return creative
+
+
+@router.get(
+    "/{strategy_id}/prices",
+    response_model=list[PriceSuggestion],
+    summary="Price prefill for the strategy's promoted products",
+    description=(
+        "Latest unit_price per promoted product from the store's own sales "
+        "data. price is null when the product name has no matching sale row — "
+        "the owner fills it in manually."
+    ),
+)
+async def get_prices(
+    strategy_id: uuid.UUID,
+    current_store: Annotated[Store, Depends(get_current_store)],
+    db: AsyncSession = Depends(get_db),
+) -> list[PriceSuggestion]:
+    try:
+        return await get_price_suggestions(
+            strategy_id=strategy_id,
+            store_id=current_store.id,
+            db=db,
+        )
+    except ValueError as e:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail=str(e))
+
+
+@router.post(
+    "/{creative_id}/compose",
+    response_model=CreativeResponse,
+    summary="Compose the final ad with exact prices overlaid",
+    description=(
+        "Stamps the owner-confirmed product names and prices onto the AI "
+        "background with Pillow — deterministic text, no AI typos. "
+        "Returns the creative with final_image_url set. Max 5 rows rendered."
+    ),
+)
+async def compose_creative(
+    creative_id: uuid.UUID,
+    body: ComposeRequest,
+    current_store: Annotated[Store, Depends(get_current_store)],
+    db: AsyncSession = Depends(get_db),
+) -> CreativeResponse:
+    try:
+        creative = await compose_final_creative(
+            creative_id=creative_id,
+            store_id=current_store.id,
+            items=[item.model_dump() for item in body.items],
+            db=db,
+        )
+    except ValueError as e:
         if "not found" in str(e).lower():
             raise HTTPException(status.HTTP_404_NOT_FOUND, detail=str(e))
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(e))

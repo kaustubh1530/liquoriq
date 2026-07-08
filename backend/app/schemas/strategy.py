@@ -59,7 +59,8 @@ class StrategyResponse(BaseModel):
     model_used: str
     created_at: datetime
 
-    model_config = {"from_attributes": True}
+    # protected_namespaces=() silences the pydantic "model_" prefix warning
+    model_config = {"from_attributes": True, "protected_namespaces": ()}
 
 
 class StrategyListItem(BaseModel):
@@ -74,4 +75,4 @@ class StrategyListItem(BaseModel):
     model_used: str
     created_at: datetime
 
-    model_config = {"from_attributes": True}
+    model_config = {"from_attributes": True, "protected_namespaces": ()}

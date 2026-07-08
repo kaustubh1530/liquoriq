@@ -1,14 +1,16 @@
 """
 schemas/creative.py — Request/response shapes for ad creative endpoints
 
-POST /creative/generate  — body: GenerateCreativeRequest → 201 CreativeResponse
-GET  /creative/{strategy_id} — latest CreativeResponse for that strategy
+POST /creative/generate                → 201 CreativeResponse
+GET  /creative/{strategy_id}           → latest CreativeResponse
+GET  /creative/{strategy_id}/prices    → list[PriceSuggestion]   (Phase 11)
+POST /creative/{creative_id}/compose   → CreativeResponse w/ final_image_url (Phase 11)
 """
 
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 # ─── POST /creative/generate ──────────────────────────────────────────────────
@@ -18,13 +20,32 @@ class GenerateCreativeRequest(BaseModel):
     strategy_id: uuid.UUID
 
 
+# ─── Phase 11: price overlay ──────────────────────────────────────────────────
+
+class PriceSuggestion(BaseModel):
+    """Prefill row: latest unit_price from the store's own sales data."""
+    product_name: str
+    price: float | None = None    # None = product name not found in sales rows
+
+
+class PriceItem(BaseModel):
+    """Owner-confirmed row used in the final composed ad."""
+    product_name: str = Field(min_length=1, max_length=200)
+    price: float = Field(gt=0, lt=100_000)
+
+
+class ComposeRequest(BaseModel):
+    """Prices to stamp onto the ad. Max 5 rows are rendered."""
+    items: list[PriceItem] = Field(min_length=1, max_length=10)
+
+
 # ─── Responses ────────────────────────────────────────────────────────────────
 
 class CreativeResponse(BaseModel):
     """
-    Full ad creative package. Mirrors every column in ad_creatives.
-    image_url is relative — the frontend prepends nothing in dev
-    (Vite proxy) and the API base URL in production.
+    Full ad creative package. image_url = original AI background;
+    final_image_url = composed ad with the deterministic price overlay
+    (null until the owner composes one).
     """
     id: uuid.UUID
     store_id: uuid.UUID
@@ -32,6 +53,8 @@ class CreativeResponse(BaseModel):
 
     image_prompt: str
     image_url: str
+    final_image_url: str | None = None
+    price_items: list | None = None
 
     instagram_caption: str
     facebook_post: str
@@ -43,4 +66,7 @@ class CreativeResponse(BaseModel):
     model_used: str
     created_at: datetime
 
-    model_config = {"from_attributes": True}
+    # protected_namespaces=() silences pydantic's warning that "model_used"
+    # collides with its reserved "model_" prefix — it's just a warning, but
+    # clean logs matter.
+    model_config = {"from_attributes": True, "protected_namespaces": ()}

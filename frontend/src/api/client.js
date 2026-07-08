@@ -105,10 +105,14 @@ export const aiApi = {
 // ── Ad Creative endpoints ─────────────────────────────────────────────────────
 
 export const creativeApi = {
-  // DALL-E 3 + GPT-4o — slow call, 15-30s
+  // gpt-image-1 + GPT-4o — slow call, 15-60s
   generate: (strategyId) => api.post('/creative/generate', { strategy_id: strategyId }),
   // Latest creative for a strategy — 404 if none generated yet
   get: (strategyId) => api.get(`/creative/${strategyId}`),
+  // Phase 11: price prefill from the store's own sales data
+  prices: (strategyId) => api.get(`/creative/${strategyId}/prices`),
+  // Phase 11: compose final ad with exact prices overlaid (Pillow, server-side)
+  compose: (creativeId, items) => api.post(`/creative/${creativeId}/compose`, { items }),
 }
 
 export default api

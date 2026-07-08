@@ -19,7 +19,7 @@ Design notes:
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import DateTime, ForeignKey, String, Text
+from sqlalchemy import DateTime, ForeignKey, JSON, String, Text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -60,6 +60,21 @@ class AdCreative(Base):
         String(500),
         nullable=False,
         comment="Relative URL, e.g. /static/creatives/<uuid>.png",
+    )
+
+    # ── Composed final ad (Phase 11 — price overlay) ──────────────────────────
+    # The original AI image stays untouched in image_url. When the owner sets
+    # prices and clicks Compose, Pillow stamps names+prices onto a copy and the
+    # result lands here. Nullable: a creative may never be composed.
+    final_image_url: Mapped[str | None] = mapped_column(
+        String(500),
+        nullable=True,
+        comment="Composed ad with deterministic price overlay",
+    )
+    price_items: Mapped[list | None] = mapped_column(
+        JSON,
+        nullable=True,
+        comment='[{"product_name": str, "price": float}] used in the overlay',
     )
 
     # ── Platform-specific copy ────────────────────────────────────────────────

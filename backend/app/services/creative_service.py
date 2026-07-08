@@ -22,15 +22,20 @@ image ($0.04) ≈ $0.05 per generation.
 import json
 import logging
 import uuid
-from pathlib import Path
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from sqlalchemy import func
+
 from app.config import get_settings
 from app.models.ad_creative import AdCreative
 from app.models.ai_strategy_report import AIStrategyReport
+from app.models.normalized_sale import NormalizedSale
+from app.models.store import Store
+from app.services.compose_service import render_final_ad
 from app.services.openai_service import generate_image, generate_json_response
+from app.services.storage_service import fetch_image, save_image
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -115,22 +120,6 @@ def _validate_creative(data: dict) -> None:
         raise ValueError(f"OpenAI response has empty fields: {empty}")
 
 
-# ─── Image persistence ─────────────────────────────────────────────────────────
-
-def _save_image(png_bytes: bytes) -> str:
-    """
-    Write PNG bytes to settings.creatives_dir with a UUID filename.
-    Returns the relative URL the frontend can load it from.
-    """
-    creatives_dir = Path(settings.creatives_dir)
-    creatives_dir.mkdir(parents=True, exist_ok=True)
-
-    filename = f"{uuid.uuid4()}.png"
-    (creatives_dir / filename).write_bytes(png_bytes)
-
-    return f"/static/creatives/{filename}"
-
-
 # ─── Public service functions ──────────────────────────────────────────────────
 
 async def generate_ad_creative(
@@ -168,8 +157,8 @@ async def generate_ad_creative(
     # 3. DALL-E 3: generate the ad image (square 1024x1024 — works on every platform)
     png_bytes = await generate_image(prompt=ai_data["image_prompt"])
 
-    # 4. Persist image to disk
-    image_url = _save_image(png_bytes)
+    # 4. Persist image (local disk in dev, Cloudinary CDN in prod)
+    image_url = await save_image(png_bytes, prefix="ad")
     logger.info("Ad image saved: %s (%d KB)", image_url, len(png_bytes) // 1024)
 
     # 5. Save to DB
@@ -191,6 +180,99 @@ async def generate_ad_creative(
     await db.refresh(creative)
 
     logger.info("Ad creative saved: id=%s", creative.id)
+    return creative
+
+
+async def get_price_suggestions(
+    strategy_id: uuid.UUID,
+    store_id: uuid.UUID,
+    db: AsyncSession,
+) -> list[dict]:
+    """
+    For each promoted product, look up its most recent unit_price from the
+    store's real sales data. This is the moat in miniature: ChatGPT doesn't
+    know your prices — your POS data does. Owner can still edit before compose.
+
+    Returns [{"product_name": str, "price": float | None}] — None when no
+    matching sale row exists (AI occasionally rephrases a product name).
+    """
+    result = await db.execute(
+        select(AIStrategyReport).where(
+            AIStrategyReport.id == strategy_id,
+            AIStrategyReport.store_id == store_id,
+        )
+    )
+    strategy = result.scalar_one_or_none()
+    if not strategy:
+        raise ValueError("Strategy not found")
+
+    suggestions: list[dict] = []
+    for name in strategy.products_to_promote:
+        row = await db.execute(
+            select(NormalizedSale.unit_price)
+            .where(
+                NormalizedSale.store_id == store_id,
+                func.lower(NormalizedSale.product_name) == str(name).lower(),
+                NormalizedSale.unit_price.isnot(None),
+            )
+            .order_by(NormalizedSale.sale_date.desc())
+            .limit(1)
+        )
+        price = row.scalar_one_or_none()
+        suggestions.append({
+            "product_name": str(name),
+            "price": float(price) if price is not None else None,
+        })
+    return suggestions
+
+
+async def compose_final_creative(
+    creative_id: uuid.UUID,
+    store_id: uuid.UUID,
+    items: list[dict],
+    db: AsyncSession,
+) -> AdCreative:
+    """
+    Compose the final postable ad: original AI background + Pillow overlay of
+    the owner-confirmed names and prices. Saves the composed PNG via the
+    storage backend and records final_image_url + price_items on the creative.
+
+    Raises:
+        ValueError   — creative not found / original image missing
+        RuntimeError — storage upload failure
+    """
+    result = await db.execute(
+        select(AdCreative).where(
+            AdCreative.id == creative_id,
+            AdCreative.store_id == store_id,
+        )
+    )
+    creative = result.scalar_one_or_none()
+    if not creative:
+        raise ValueError("Creative not found")
+
+    store_row = await db.execute(select(Store).where(Store.id == store_id))
+    store = store_row.scalar_one_or_none()
+
+    # 1. Original AI background (disk in dev, Cloudinary in prod)
+    background = await fetch_image(creative.image_url)
+
+    # 2. Deterministic overlay — exact names, exact prices
+    final_png = await render_final_ad(
+        background_png=background,
+        headline=creative.website_banner_headline,
+        items=items,
+        store_name=store.name if store else "",
+    )
+
+    # 3. Persist + record
+    final_url = await save_image(final_png, prefix="final")
+    creative.final_image_url = final_url
+    creative.price_items = items
+    await db.commit()
+    await db.refresh(creative)
+
+    logger.info("Final ad composed: creative=%s url=%s", creative.id, final_url)
     return creative
 
 

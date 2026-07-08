@@ -50,7 +50,10 @@ class Settings(BaseSettings):
     openai_image_model: str = "gpt-image-1"   # successor to DALL-E 3; always returns b64
 
     # ── Ad creatives ──────────────────────────────────────────────────────────
-    creatives_dir: str = "generated_images"   # DALL-E PNGs saved here, served at /static/creatives
+    creatives_dir: str = "generated_images"   # local image dir, served at /static/creatives
+    # Cloudinary (prod image storage). Format: cloudinary://<key>:<secret>@<cloud_name>
+    # Empty = local disk storage (dev default).
+    cloudinary_url: str = ""
 
     # ── File Uploads ──────────────────────────────────────────────────────────
     upload_dir: str = "uploads"
