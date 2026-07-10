@@ -84,6 +84,7 @@ async def parse_upload(upload_id: uuid.UUID, store_id: uuid.UUID, db: AsyncSessi
                 quantity=row.get("quantity"),
                 unit_price=row.get("unit_price"),
                 total_amount=row.get("total_amount"),
+                stock_on_hand=row.get("stock_on_hand"),
                 sale_date=row.get("sale_date"),
                 channel=row.get("channel", "pos"),
                 customer_name=row.get("customer_name"),

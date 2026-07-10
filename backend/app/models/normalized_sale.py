@@ -64,6 +64,9 @@ class NormalizedSale(Base):
     quantity: Mapped[Decimal | None] = mapped_column(Numeric(12, 3), nullable=True)
     unit_price: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
     total_amount: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
+    # Phase 13: AdvEntPOS summary reports include current inventory per product.
+    # Snapshot as of the report period — fuels reorder/dead-stock intelligence.
+    stock_on_hand: Mapped[Decimal | None] = mapped_column(Numeric(12, 3), nullable=True)
 
     # ── Channel — which platform this sale came from ──────────────────────────
     channel: Mapped[str] = mapped_column(
