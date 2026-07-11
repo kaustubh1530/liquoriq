@@ -77,8 +77,11 @@ export const uploadApi = {
   upload: (file, source) => {
     const form = new FormData()
     form.append('file', file)
-    form.append('source', source)
+    // BUG FIX (Phase 13): the backend reads `source` as a QUERY param, not a
+    // form field — sending it in the form silently defaulted every upload to
+    // "other" (wrong parser). Pass it via params.
     return api.post('/uploads/report', form, {
+      params: { source },
       headers: { 'Content-Type': 'multipart/form-data' },
     })
   },

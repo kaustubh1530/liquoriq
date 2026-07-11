@@ -7,12 +7,14 @@ import { uploadApi } from '../api/client'
 import Layout from '../components/Layout'
 import { Upload, RefreshCw, CheckCircle, XCircle, Clock } from 'lucide-react'
 
+// Values must match the backend ReportSource enum exactly (lowercase!) —
+// uppercase values were rejected with 422 once source actually reached the API.
 const SOURCE_OPTIONS = [
-  { value: 'POS',       label: 'POS (AdvEntPOS / Square / etc.)' },
-  { value: 'WEBSITE',   label: 'Website' },
-  { value: 'UBER_EATS', label: 'Uber Eats' },
-  { value: 'DOORDASH',  label: 'DoorDash' },
-  { value: 'OTHER',     label: 'Other' },
+  { value: 'pos',       label: 'POS (AdvEntPOS / Square / etc.)' },
+  { value: 'website',   label: 'Website' },
+  { value: 'uber_eats', label: 'Uber Eats' },
+  { value: 'doordash',  label: 'DoorDash' },
+  { value: 'other',     label: 'Other' },
 ]
 
 const STATUS_ICON = {
@@ -28,7 +30,7 @@ const STATUS_ICON = {
 
 export default function Uploads() {
   const fileRef = useRef()
-  const [source, setSource] = useState('POS')
+  const [source, setSource] = useState('pos')
   const [uploads, setUploads] = useState([])
   const [uploading, setUploading] = useState(false)
   const [parsing, setParsing] = useState({})
