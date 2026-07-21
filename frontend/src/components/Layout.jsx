@@ -9,6 +9,7 @@ import {
   Upload,
   Sparkles,
   Megaphone,
+  ArrowLeftRight,
   Store,
   LogOut,
 } from 'lucide-react'
@@ -19,10 +20,11 @@ const NAV = [
   { to: '/uploads',    label: 'Uploads',      icon: Upload },
   { to: '/ai',         label: 'AI Strategy',  icon: Sparkles },
   { to: '/creative',   label: 'Ad Creative',  icon: Megaphone },
+  { to: '/transfers',  label: 'Transfers',    icon: ArrowLeftRight },
 ]
 
 export default function Layout({ children }) {
-  const { user, store, logout } = useAuth()
+  const { user, store, stores, logout, switchStore } = useAuth()
   const navigate = useNavigate()
 
   const handleLogout = () => {
@@ -34,11 +36,22 @@ export default function Layout({ children }) {
     <div className="flex h-screen bg-gray-50">
       {/* ── Sidebar ── */}
       <aside className="w-60 bg-white border-r border-gray-100 flex flex-col">
-        {/* Logo */}
+        {/* Logo + store switcher (Phase 14: multi-store) */}
         <div className="px-6 py-5 border-b border-gray-100">
           <span className="text-xl font-bold text-brand-500">🥃 LiquorIQ</span>
-          {store && (
-            <p className="text-xs text-gray-400 mt-1 truncate">{store.name}</p>
+          {stores.length > 1 ? (
+            <select
+              value={store?.id ?? ''}
+              onChange={(e) => switchStore(e.target.value)}
+              className="mt-2 w-full text-xs border border-gray-200 rounded-lg px-2 py-1.5 text-gray-600 focus:outline-none focus:ring-2 focus:ring-brand-500"
+              title="Switch store"
+            >
+              {stores.map((s) => (
+                <option key={s.id} value={s.id}>{s.name}</option>
+              ))}
+            </select>
+          ) : (
+            store && <p className="text-xs text-gray-400 mt-1 truncate">{store.name}</p>
           )}
         </div>
 

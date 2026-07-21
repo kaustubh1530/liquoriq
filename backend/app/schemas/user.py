@@ -84,6 +84,9 @@ class StoreResponse(BaseModel):
     zip_code: str | None
     phone: str | None
     pos_system: str | None
+    # Phase 14: the security key other stores enter to add us as an exchange
+    # partner. Shown in the Transfers tab.
+    exchange_code: str | None = None
     is_active: bool
     created_at: datetime
 
@@ -93,6 +96,33 @@ class StoreResponse(BaseModel):
 # ─── Combined response (user + their store) ───────────────────────────────────
 
 class UserWithStoreResponse(UserResponse):
+    """
+    Phase 14: `store` = the CURRENTLY SELECTED store (kept for backward compat),
+    `stores` = all stores this user can access (owner: all owned; staff: just
+    their assigned store), `role` = owner | staff.
+    """
+    role: str = "owner"
     store: StoreResponse | None = None
+    stores: list[StoreResponse] = []
+
+    model_config = {"from_attributes": True}
+
+
+# ─── Staff management (Phase 14) ──────────────────────────────────────────────
+
+class StaffCreate(BaseModel):
+    """Owner creates a staff login pinned to one store."""
+    email: EmailStr
+    full_name: str = Field(..., min_length=2, max_length=255)
+    password: str = Field(..., min_length=8, max_length=100)
+
+
+class StaffResponse(BaseModel):
+    id: uuid.UUID
+    email: EmailStr
+    full_name: str
+    is_active: bool
+    store_id: uuid.UUID | None = None
+    created_at: datetime
 
     model_config = {"from_attributes": True}

@@ -31,6 +31,7 @@ from app.database import Base  # noqa: F401 — keeps metadata populated
 from app.models import user, store, uploaded_report, normalized_sale  # noqa: F401 — Phase 3-5
 from app.models import ai_strategy_report  # noqa: F401 — Phase 7
 from app.models import ad_creative  # noqa: F401 — Phase 10
+from app.models import transfer  # noqa: F401 — Phase 14
 
 settings_app = get_settings()
 

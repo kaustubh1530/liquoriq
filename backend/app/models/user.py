@@ -13,7 +13,7 @@ Why UUID for primary key instead of integer?
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, DateTime, String
+from sqlalchemy import Boolean, DateTime, ForeignKey, String
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -44,6 +44,17 @@ class User(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     is_verified: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
+    # ── Role & store assignment (Phase 14: multi-store + staff) ──────────────
+    # "owner": owns stores (via Store.owner_id), switches between them freely.
+    # "staff": created by an owner, permanently pinned to ONE store (store_id).
+    role: Mapped[str] = mapped_column(String(20), default="owner", nullable=False)
+    store_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("stores.id", ondelete="CASCADE", use_alter=True, name="fk_users_store_id"),
+        nullable=True,
+        comment="Staff only: the store this account is pinned to",
+    )
+
     # ── Timestamps ────────────────────────────────────────────────────────────
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -58,11 +69,19 @@ class User(Base):
     )
 
     # ── Relationships ─────────────────────────────────────────────────────────
-    # One user → one store (MVP). back_populates wires the reverse side.
-    store: Mapped["Store"] = relationship(  # noqa: F821
+    # Phase 14: one OWNER → many stores. (Circular FKs users↔stores mean every
+    # relationship must name its foreign_keys explicitly.)
+    stores: Mapped[list["Store"]] = relationship(  # noqa: F821
         "Store",
         back_populates="owner",
-        uselist=False,   # uselist=False = one-to-one
+        foreign_keys="Store.owner_id",
+        lazy="selectin",
+        order_by="Store.created_at",
+    )
+    # Staff only: the single store this account is pinned to.
+    assigned_store: Mapped["Store | None"] = relationship(  # noqa: F821
+        "Store",
+        foreign_keys=[store_id],
         lazy="selectin",
     )
 

@@ -28,6 +28,7 @@ export default defineConfig({
       '/analytics': backend,
       '/ai':        backend,
       '/creative':  backend,
+      '/transfers': backend,
       '/static':    backend,
       '/reports':   backend,
     },

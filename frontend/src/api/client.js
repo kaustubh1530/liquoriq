@@ -42,10 +42,24 @@ export const setAuthToken = (token) => {
 
 export const getAuthToken = () => sessionStorage.getItem('liq_token')
 
+// ── Store selection (Phase 14: multi-store) ──────────────────────────────────
+// Owners switch stores; the chosen store id rides on every request as
+// X-Store-Id and the backend scopes all data to it. Staff never set this —
+// the backend pins them to their assigned store.
+export const setSelectedStore = (storeId) => {
+  if (storeId) sessionStorage.setItem('liq_store', storeId)
+  else sessionStorage.removeItem('liq_store')
+}
+export const getSelectedStore = () => sessionStorage.getItem('liq_store')
+
 api.interceptors.request.use((config) => {
   const token = getAuthToken()
   if (token) {
     config.headers.Authorization = `Bearer ${token}`
+  }
+  const storeId = getSelectedStore()
+  if (storeId) {
+    config.headers['X-Store-Id'] = storeId
   }
   return config
 })
@@ -69,6 +83,40 @@ export const storeApi = {
   create: (data) => api.post('/stores', data),
   get: () => api.get('/stores/me'),
   update: (data) => api.put('/stores/me', data),
+  // Phase 14: multi-store + staff
+  list: () => api.get('/stores'),
+  createStaff: (storeId, data) => api.post(`/stores/${storeId}/staff`, data),
+  listStaff: (storeId) => api.get(`/stores/${storeId}/staff`),
+  deactivateStaff: (userId) => api.delete(`/stores/staff/${userId}`),
+}
+
+// ── Transfer endpoints (Phase 14) ─────────────────────────────────────────────
+
+export const transferApi = {
+  // Partners (Phase 14: exchanges happen with named partner stores)
+  partners: () => api.get('/transfers/partners'),
+  addPartner: (name, code) => api.post('/transfers/partners', { name, code: code || null }),
+  removePartner: (partnerId) => api.delete(`/transfers/partners/${partnerId}`),
+  // Exchanges — data: { partner_id, direction: 'outgoing'|'incoming', transfer_date, note, items }
+  create: (data) => api.post('/transfers', data),
+  list: (partnerId) => api.get('/transfers', { params: partnerId ? { partner_id: partnerId } : {} }),
+  ledger: (partnerId) => api.get(`/transfers/ledger/${partnerId}`),
+  settle: (partnerId, data) => api.post(`/transfers/settle/${partnerId}`, data),
+  payments: (partnerId) => api.get(`/transfers/payments/${partnerId}`),
+  undoPayment: (paymentId) => api.delete(`/transfers/payments/${paymentId}`),
+  // Downloads the month's CSV statement (auth header required → blob, not <a href>)
+  downloadReport: async (partnerId, month) => {
+    const res = await api.get(`/transfers/report/${partnerId}`, {
+      params: { month, format: 'csv' },
+      responseType: 'blob',
+    })
+    const url = URL.createObjectURL(res.data)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `exchange_${month}.csv`
+    a.click()
+    URL.revokeObjectURL(url)
+  },
 }
 
 // ── Upload endpoints ──────────────────────────────────────────────────────────

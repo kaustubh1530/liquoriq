@@ -31,10 +31,11 @@ class Store(Base):
     )
 
     # ── Ownership ─────────────────────────────────────────────────────────────
+    # Phase 14: unique=True removed — one owner can now own MANY stores
+    # (the pilot owner runs 4). Migration f3d82c1a9b47 drops the DB constraint.
     owner_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("users.id", ondelete="CASCADE"),
-        unique=True,    # one store per user (MVP)
         nullable=False,
         index=True,
     )
@@ -54,6 +55,16 @@ class Store(Base):
         comment="e.g. AdvEntPOS, Square, Clover — used to select the right parser",
     )
 
+    # ── Exchange code (Phase 14 partners) ────────────────────────────────────
+    # The security key another store must present to add THIS store as an
+    # exchange partner. Shown in the Transfers tab; shared verbally/on paper.
+    exchange_code: Mapped[str | None] = mapped_column(
+        String(16),
+        unique=True,
+        nullable=True,
+        default=lambda: uuid.uuid4().hex[:8].upper(),
+    )
+
     # ── Status ────────────────────────────────────────────────────────────────
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
@@ -71,9 +82,12 @@ class Store(Base):
     )
 
     # ── Relationships ─────────────────────────────────────────────────────────
+    # foreign_keys is explicit because users↔stores now have circular FKs
+    # (Store.owner_id → users.id AND users.store_id → stores.id for staff).
     owner: Mapped["User"] = relationship(  # noqa: F821
         "User",
-        back_populates="store",
+        back_populates="stores",
+        foreign_keys=[owner_id],
     )
 
     def __repr__(self) -> str:

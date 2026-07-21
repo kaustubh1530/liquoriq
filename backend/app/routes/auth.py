@@ -148,5 +148,14 @@ async def login(
 )
 async def get_me(
     current_user: Annotated[User, Depends(get_current_user)],
-) -> User:
-    return current_user
+) -> UserWithStoreResponse:
+    # Phase 14: `stores` = everything this account can access; `store` = a
+    # sensible default for the frontend (staff's pinned store / owner's first).
+    accessible = (
+        [current_user.assigned_store] if current_user.role == "staff" and current_user.assigned_store
+        else list(current_user.stores)
+    )
+    data = UserWithStoreResponse.model_validate(current_user, from_attributes=True)
+    data.stores = accessible
+    data.store = accessible[0] if accessible else None
+    return data
