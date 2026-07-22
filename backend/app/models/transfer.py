@@ -1,24 +1,25 @@
 """
-models/transfer.py — Exchange partners + inter-store transfer ledger (Phase 14)
+models/transfer.py — Shared inter-store exchange ledger (Phase 14, shared model)
 
-REAL WORKFLOW (pilot owner): a store exchanges stock with OTHER liquor stores —
-some their own, some entirely independent (Sherry's, World Wine, …) that may
-never use LiquorIQ. So the ledger is kept per PARTNER, from the current
-store's point of view:
+Real workflow (~$80-90k/month per store): two LiquorIQ stores exchange stock.
+The ledger is SHARED — both stores see the same records — but every record is
+audited: who added it, and (on undo) who removed it.
 
-  TransferPartner  = a store we exchange with, added by name. Security:
-                     adding a partner that uses LiquorIQ requires entering
-                     THEIR store's exchange_code (which links the accounts);
-                     off-app partners get a generated partner_code that can
-                     link them later if they ever join.
-  Transfer         = one exchange event with a partner, direction is from
-                     OUR store's view: "outgoing" (we sent) / "incoming".
-  TransferItem     = line items at WHOLESALE cost.
-  SettlementPayment= money paid between us and the partner; payer is
-                     "me" (our store paid) or "partner".
+How linking works (both stores must be on LiquorIQ, code mandatory):
+  - Each Store has a unique exchange_code.
+  - Classy adds "Sherry's" by entering Sherry's code → a TransferPartner row
+    (Classy → Sherry's, linked_store_id set). Classy can now record exchanges.
+  - Sherry's sees the SAME history only after adding Classy's code (their own
+    TransferPartner row Sherry's → Classy).
+  - Transfers/payments are keyed by the real store PAIR (from_store_id,
+    to_store_id), so both members query the same rows.
 
-Balances/monthly statements are DERIVED from raw records (never stored) —
-corrections and undos self-heal, carry-forward falls out of the math.
+Audit + undo:
+  - created_by_label / created_by_store_id record who entered a row.
+  - Undo is a SOFT delete: is_deleted + deleted_by_label + deleted_at. The row
+    stays for the audit trail (shown struck-through) and drops out of balances.
+  - Derive-don't-snapshot: balances recompute from non-deleted rows, so undo
+    self-heals every number.
 """
 
 import uuid
@@ -36,20 +37,17 @@ class TransferPartner(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
 
-    # The store whose partner list this is (each of an owner's stores keeps its own)
+    # The store that owns this partner entry
     store_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("stores.id", ondelete="CASCADE"),
         nullable=False, index=True,
     )
-
-    name: Mapped[str] = mapped_column(String(255), nullable=False)
-    # The security key for this relationship. Either the partner store's
-    # exchange_code (when linked) or a generated code we hand to them.
-    partner_code: Mapped[str] = mapped_column(String(16), nullable=False)
-    # Set when the partner is a LiquorIQ store (added via their exchange_code)
-    linked_store_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("stores.id", ondelete="SET NULL"), nullable=True,
+    # The real LiquorIQ store on the other side (MANDATORY — resolved from code)
+    linked_store_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("stores.id", ondelete="CASCADE"), nullable=False,
     )
+    # Display name (defaults to the linked store's name)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
 
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
@@ -57,7 +55,7 @@ class TransferPartner(Base):
     )
 
     def __repr__(self) -> str:
-        return f"<TransferPartner id={self.id} name={self.name}>"
+        return f"<TransferPartner {self.store_id}→{self.linked_store_id} {self.name}>"
 
 
 class Transfer(Base):
@@ -65,38 +63,45 @@ class Transfer(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
 
-    store_id: Mapped[uuid.UUID] = mapped_column(
+    # The real stores on each side (both LiquorIQ stores). Either sees this row.
+    from_store_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("stores.id", ondelete="CASCADE"),
         nullable=False, index=True,
     )
-    partner_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("transfer_partners.id", ondelete="CASCADE"),
+    to_store_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("stores.id", ondelete="CASCADE"),
         nullable=False, index=True,
     )
 
-    # From OUR store's point of view
-    direction: Mapped[str] = mapped_column(
-        String(10), nullable=False,
-        comment="outgoing = we sent stock to the partner; incoming = we received",
-    )
     transfer_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
 
+    # ── Audit: who added this ─────────────────────────────────────────────────
     created_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True,
+    )
+    created_by_store_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("stores.id", ondelete="SET NULL"), nullable=True,
+    )
+    created_by_label: Mapped[str | None] = mapped_column(
+        String(320), nullable=True, comment='e.g. "Jane Doe · Classy Corks"',
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False,
     )
 
+    # ── Soft delete (undo) + audit of who removed it ─────────────────────────
+    is_deleted: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    deleted_by_label: Mapped[str | None] = mapped_column(String(320), nullable=True)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
     items: Mapped[list["TransferItem"]] = relationship(
         "TransferItem", back_populates="transfer",
         cascade="all, delete-orphan", lazy="selectin",
     )
-    partner: Mapped["TransferPartner"] = relationship("TransferPartner", lazy="selectin")
 
     def __repr__(self) -> str:
-        return f"<Transfer id={self.id} {self.direction} partner={self.partner_id} {self.transfer_date}>"
+        return f"<Transfer id={self.id} {self.from_store_id}→{self.to_store_id} {self.transfer_date}>"
 
 
 class TransferItem(Base):
@@ -125,17 +130,16 @@ class SettlementPayment(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
 
-    store_id: Mapped[uuid.UUID] = mapped_column(
+    # payer paid payee — both real stores in the pair
+    from_store_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("stores.id", ondelete="CASCADE"),
         nullable=False, index=True,
     )
-    partner_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("transfer_partners.id", ondelete="CASCADE"),
+    to_store_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("stores.id", ondelete="CASCADE"),
         nullable=False, index=True,
     )
 
-    # "me" = our store paid the partner; "partner" = they paid us
-    payer: Mapped[str] = mapped_column(String(10), nullable=False)
     amount: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False)
     paid_on: Mapped[date] = mapped_column(Date, nullable=False)
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -143,9 +147,17 @@ class SettlementPayment(Base):
     created_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True,
     )
+    created_by_store_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("stores.id", ondelete="SET NULL"), nullable=True,
+    )
+    created_by_label: Mapped[str | None] = mapped_column(String(320), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False,
     )
 
+    is_deleted: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    deleted_by_label: Mapped[str | None] = mapped_column(String(320), nullable=True)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
     def __repr__(self) -> str:
-        return f"<SettlementPayment {self.payer} ${self.amount} partner={self.partner_id}>"
+        return f"<SettlementPayment {self.from_store_id}→{self.to_store_id} ${self.amount}>"

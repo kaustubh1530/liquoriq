@@ -93,13 +93,14 @@ export const storeApi = {
 // ── Transfer endpoints (Phase 14) ─────────────────────────────────────────────
 
 export const transferApi = {
-  // Partners (Phase 14: exchanges happen with named partner stores)
+  // Partners (Phase 14: both stores must be on LiquorIQ; code mandatory)
   partners: () => api.get('/transfers/partners'),
-  addPartner: (name, code) => api.post('/transfers/partners', { name, code: code || null }),
+  addPartner: (code, name) => api.post('/transfers/partners', { code, name: name || null }),
   removePartner: (partnerId) => api.delete(`/transfers/partners/${partnerId}`),
   // Exchanges — data: { partner_id, direction: 'outgoing'|'incoming', transfer_date, note, items }
   create: (data) => api.post('/transfers', data),
-  list: (partnerId) => api.get('/transfers', { params: partnerId ? { partner_id: partnerId } : {} }),
+  list: (partnerId) => api.get('/transfers', { params: { partner_id: partnerId } }),
+  undoTransfer: (transferId) => api.delete(`/transfers/${transferId}`),
   ledger: (partnerId) => api.get(`/transfers/ledger/${partnerId}`),
   settle: (partnerId, data) => api.post(`/transfers/settle/${partnerId}`, data),
   payments: (partnerId) => api.get(`/transfers/payments/${partnerId}`),

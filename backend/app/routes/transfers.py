@@ -1,25 +1,14 @@
 """
-routes/transfers.py — Exchange partner + transfer endpoints (Phase 14)
+routes/transfers.py — Shared exchange ledger endpoints (Phase 14, shared model)
 
-Partners:  POST/GET /transfers/partners · DELETE /transfers/partners/{id}
-Transfers: POST /transfers · GET /transfers?partner_id=
-Ledger:    GET /transfers/ledger/{partner_id}
-Payments:  GET /transfers/payments/{partner_id} · POST /transfers/settle/{partner_id}
-           DELETE /transfers/payments/{payment_id}  (undo — owner only)
-Report:    GET /transfers/report/{partner_id}?month=YYYY-MM[&format=csv]
-
-Staff can manage exchanges for their pinned store; settlements and undo are
-owner-only. Adding a partner with a code links to that LiquorIQ store.
+Both linked stores see the same records. Staff and owners can record and undo
+transfers (data entry); only owners record/undo settlement payments (money).
 """
 
-import csv
-import io
-import re
 import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
@@ -28,56 +17,54 @@ from app.models.user import User
 from app.routes.auth import get_current_user
 from app.routes.stores import get_current_store
 from app.schemas.transfer import (
-    LedgerResponse,
-    MonthlyReportResponse,
-    PartnerCreate,
-    PartnerResponse,
-    PaymentCreate,
-    PaymentResponse,
-    TransferCreate,
-    TransferResponse,
+    LedgerResponse, MonthlyReportResponse, PartnerCreate, PartnerResponse,
+    PaymentCreate, PaymentResponse, TransferCreate, TransferResponse,
 )
-from app.services import transfer_service as svc
+from app.services.transfer_service import (
+    create_partner, create_transfer, deactivate_partner, get_ledger,
+    get_monthly_report, list_partners, list_payments, list_transfers,
+    record_payment, undo_payment, undo_transfer,
+)
 
 router = APIRouter()
 
 
 # ─── Partners ─────────────────────────────────────────────────────────────────
 
-@router.post("/partners", response_model=PartnerResponse, status_code=status.HTTP_201_CREATED,
-             summary="Add an exchange partner (enter their code to link)")
+@router.post("/partners", response_model=PartnerResponse,
+             status_code=status.HTTP_201_CREATED,
+             summary="Add an exchange partner by their exchange code (mandatory)")
 async def add_partner(
     body: PartnerCreate,
     current_store: Annotated[Store, Depends(get_current_store)],
     db: AsyncSession = Depends(get_db),
 ):
     try:
-        return await svc.create_partner(current_store, body.name, body.code, db)
+        p = await create_partner(current_store, body.code, body.name, db)
+        p["mutual"] = False
+        return p
     except ValueError as e:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(e))
 
 
 @router.get("/partners", response_model=list[PartnerResponse],
-            summary="This store's exchange partners")
+            summary="List exchange partners")
 async def partners(
     current_store: Annotated[Store, Depends(get_current_store)],
     db: AsyncSession = Depends(get_db),
 ):
-    return await svc.list_partners(current_store, db)
+    return await list_partners(current_store, db)
 
 
 @router.delete("/partners/{partner_id}", status_code=status.HTTP_204_NO_CONTENT,
-               summary="Remove a partner (owner only; history is kept)")
+               summary="Remove an exchange partner")
 async def remove_partner(
     partner_id: uuid.UUID,
-    current_user: Annotated[User, Depends(get_current_user)],
     current_store: Annotated[Store, Depends(get_current_store)],
     db: AsyncSession = Depends(get_db),
 ):
-    if current_user.role != "owner":
-        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="Owner account required.")
     try:
-        await svc.deactivate_partner(current_store, partner_id, db)
+        await deactivate_partner(current_store, partner_id, db)
     except ValueError as e:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail=str(e))
 
@@ -85,7 +72,7 @@ async def remove_partner(
 # ─── Transfers ────────────────────────────────────────────────────────────────
 
 @router.post("", response_model=TransferResponse, status_code=status.HTTP_201_CREATED,
-             summary="Record an exchange with a partner (either direction)")
+             summary="Record an exchange (either direction)")
 async def create(
     body: TransferCreate,
     current_user: Annotated[User, Depends(get_current_user)],
@@ -93,7 +80,7 @@ async def create(
     db: AsyncSession = Depends(get_db),
 ):
     try:
-        return await svc.create_transfer(
+        return await create_transfer(
             current_store=current_store, user=current_user,
             partner_id=body.partner_id, direction=body.direction,
             items=[i.model_dump() for i in body.items],
@@ -104,39 +91,56 @@ async def create(
 
 
 @router.get("", response_model=list[TransferResponse],
-            summary="Exchange history (optionally filtered to one partner)")
+            summary="Shared exchange history for a partner")
 async def history(
+    partner_id: uuid.UUID,
     current_store: Annotated[Store, Depends(get_current_store)],
     db: AsyncSession = Depends(get_db),
-    partner_id: uuid.UUID | None = None,
 ):
-    return await svc.list_transfers(current_store, db, partner_id=partner_id)
+    try:
+        return await list_transfers(current_store, partner_id, db)
+    except ValueError as e:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail=str(e))
 
 
-# ─── Ledger / payments ────────────────────────────────────────────────────────
+@router.delete("/{transfer_id}", status_code=status.HTTP_204_NO_CONTENT,
+               summary="Undo an exchange record (audited)")
+async def undo(
+    transfer_id: uuid.UUID,
+    current_user: Annotated[User, Depends(get_current_user)],
+    current_store: Annotated[Store, Depends(get_current_store)],
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        await undo_transfer(current_store, current_user, transfer_id, db)
+    except ValueError as e:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail=str(e))
+
+
+# ─── Ledger / report / payments ───────────────────────────────────────────────
 
 @router.get("/ledger/{partner_id}", response_model=LedgerResponse,
-            summary="Balance + monthly breakdown with a partner")
+            summary="Balance + monthly statement with a partner")
 async def ledger(
     partner_id: uuid.UUID,
     current_store: Annotated[Store, Depends(get_current_store)],
     db: AsyncSession = Depends(get_db),
 ):
     try:
-        return await svc.get_ledger(current_store, partner_id, db)
+        return await get_ledger(current_store, partner_id, db)
     except ValueError as e:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail=str(e))
 
 
 @router.get("/payments/{partner_id}", response_model=list[PaymentResponse],
-            summary="Settlement payments with a partner (display + undo)")
+            summary="Settlement payments with a partner")
 async def payments(
     partner_id: uuid.UUID,
     current_store: Annotated[Store, Depends(get_current_store)],
     db: AsyncSession = Depends(get_db),
 ):
     try:
-        return await svc.list_payments(current_store, partner_id, db)
+        return await list_payments(current_store, partner_id, db)
     except ValueError as e:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail=str(e))
 
@@ -152,36 +156,31 @@ async def settle(
     db: AsyncSession = Depends(get_db),
 ):
     if current_user.role != "owner":
-        raise HTTPException(status.HTTP_403_FORBIDDEN,
-                            detail="Only the owner can record settlement payments.")
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="Only the owner can record payments.")
     try:
-        return await svc.record_payment(
+        return await record_payment(
             current_store=current_store, user=current_user, partner_id=partner_id,
-            amount=body.amount, payer=body.payer, paid_on=body.paid_on,
-            note=body.note, db=db,
+            amount=body.amount, payer=body.payer, paid_on=body.paid_on, note=body.note, db=db,
         )
     except ValueError as e:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(e))
 
 
 @router.delete("/payments/{payment_id}", status_code=status.HTTP_204_NO_CONTENT,
-               summary="Undo a settlement payment (owner only)")
-async def undo_payment(
+               summary="Undo a settlement payment (owner only, audited)")
+async def undo_settle(
     payment_id: uuid.UUID,
     current_user: Annotated[User, Depends(get_current_user)],
     current_store: Annotated[Store, Depends(get_current_store)],
     db: AsyncSession = Depends(get_db),
 ):
     if current_user.role != "owner":
-        raise HTTPException(status.HTTP_403_FORBIDDEN,
-                            detail="Only the owner can undo settlement payments.")
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="Only the owner can undo payments.")
     try:
-        await svc.delete_payment(current_store, payment_id, db)
+        await undo_payment(current_store, current_user, payment_id, db)
     except ValueError as e:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail=str(e))
 
-
-# ─── Monthly report ───────────────────────────────────────────────────────────
 
 @router.get("/report/{partner_id}", response_model=MonthlyReportResponse,
             summary="End-of-month statement (add ?format=csv to download)")
@@ -192,16 +191,21 @@ async def monthly_report(
     db: AsyncSession = Depends(get_db),
     format: str = "json",
 ):
-    if not re.fullmatch(r"\d{4}-\d{2}", month):
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
-                            detail="month must look like 2026-07")
+    import re as _re
+    if not _re.fullmatch(r"\d{4}-\d{2}", month):
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail="month must look like 2026-07")
     try:
-        report = await svc.get_monthly_report(current_store, partner_id, month, db)
+        report = await get_monthly_report(current_store, partner_id, month, db)
     except ValueError as e:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail=str(e))
 
     if format != "csv":
         return report
+
+    import csv
+    import io
+
+    from fastapi.responses import Response
 
     buf = io.StringIO()
     w = csv.writer(buf)
@@ -227,8 +231,5 @@ async def monthly_report(
             ])
 
     filename = f"exchange_{report['month']}_{report['partner_name'].replace(' ', '_')}.csv"
-    return Response(
-        content=buf.getvalue(),
-        media_type="text/csv",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
-    )
+    return Response(content=buf.getvalue(), media_type="text/csv",
+                    headers={"Content-Disposition": f'attachment; filename="{filename}"'})
