@@ -18,6 +18,10 @@ from pydantic import BaseModel, Field
 class GenerateCreativeRequest(BaseModel):
     """The strategy to build a creative package for."""
     strategy_id: uuid.UUID
+    offer_override: str | None = Field(
+        default=None, max_length=200,
+        description="Exact promo price/offer to render on the ad (defaults to the strategy's offer)",
+    )
 
 
 # ─── Phase 11: price overlay ──────────────────────────────────────────────────

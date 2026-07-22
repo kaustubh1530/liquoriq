@@ -116,13 +116,15 @@ def _strip_internal_numbers(offer: str) -> str:
     return re.sub(r"\s{2,}", " ", result).strip(" -—,;") or offer.split("(")[0].strip()
 
 
-def _build_user_prompt(strategy: AIStrategyReport) -> str:
+def _build_user_prompt(strategy: AIStrategyReport, offer_override: str | None = None) -> str:
     """Feed the full strategy context so the copy AND image are grounded in real data."""
     product_list = list(strategy.products_to_promote or [])
     hero = product_list[0] if product_list else "the promoted bottle"
     products = json.dumps(product_list)
     occasion = strategy.occasion or strategy.strategy_title
-    customer_offer = _strip_internal_numbers(strategy.recommended_offer)
+    # Owner can override the exact promo price/offer that gets rendered on the ad.
+    base_offer = offer_override.strip() if offer_override and offer_override.strip() else strategy.recommended_offer
+    customer_offer = _strip_internal_numbers(base_offer)
     return f"""Store: {strategy.store_name}
 
 Promotion strategy to turn into ad creative:
@@ -170,9 +172,11 @@ async def generate_ad_creative(
     strategy_id: uuid.UUID,
     store_id: uuid.UUID,
     db: AsyncSession,
+    offer_override: str | None = None,
 ) -> AdCreative:
     """
-    Full pipeline: strategy → GPT-4o copy → DALL-E image → disk → DB.
+    Full pipeline: strategy → GPT-4o copy → gpt-image-1 image → disk → DB.
+    offer_override lets the owner set the EXACT promo price rendered on the ad.
 
     Raises:
         ValueError   — strategy not found / bad AI response
@@ -189,12 +193,13 @@ async def generate_ad_creative(
     if not strategy:
         raise ValueError("Strategy not found")
 
-    logger.info("Generating ad creative for strategy=%s", strategy_id)
+    logger.info("Generating ad creative for strategy=%s (offer_override=%s)",
+                strategy_id, bool(offer_override))
 
-    # 2. GPT-4o: platform copy + DALL-E prompt
+    # 2. GPT-4o: platform copy + image prompt
     ai_data = await generate_json_response(
         SYSTEM_PROMPT,
-        _build_user_prompt(strategy),
+        _build_user_prompt(strategy, offer_override),
     )
     _validate_creative(ai_data)
 

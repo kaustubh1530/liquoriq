@@ -171,8 +171,9 @@ export const dealApi = {
 // ── Ad Creative endpoints ─────────────────────────────────────────────────────
 
 export const creativeApi = {
-  // gpt-image-1 + GPT-4o — slow call, 15-60s
-  generate: (strategyId) => api.post('/creative/generate', { strategy_id: strategyId }),
+  // gpt-image-1 + GPT-4o — slow call, 40-60s. offer overrides the price rendered on the ad.
+  generate: (strategyId, offerOverride = null) =>
+    api.post('/creative/generate', { strategy_id: strategyId, offer_override: offerOverride }),
   // Latest creative for a strategy — 404 if none generated yet
   get: (strategyId) => api.get(`/creative/${strategyId}`),
   // Phase 11: price prefill from the store's own sales data
