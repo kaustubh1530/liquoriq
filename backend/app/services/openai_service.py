@@ -96,6 +96,10 @@ async def generate_image(prompt: str, size: str = "1024x1024") -> bytes:
         # Legacy-only params — gpt-image-1 rejects these with a 400
         kwargs["response_format"] = "b64_json"
         kwargs["quality"] = "standard"
+    else:
+        # gpt-image-1: "high" renders scenes + in-image text far more cleanly,
+        # which is what makes a finished, festive ad (vs a bland studio shot).
+        kwargs["quality"] = "high"
 
     try:
         response = await _client.images.generate(**kwargs)

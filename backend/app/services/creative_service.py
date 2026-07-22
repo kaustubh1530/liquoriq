@@ -44,7 +44,8 @@ settings = get_settings()
 
 SYSTEM_PROMPT = """You are a senior creative director at an ad agency that
 specializes in local retail — specifically independent liquor stores. You turn
-promotion strategies into scroll-stopping, platform-native ad copy.
+promotion strategies into scroll-stopping, platform-native ad copy AND a
+finished, ready-to-post promotional AD IMAGE.
 
 Platform rules you always follow:
   - instagram_caption: punchy, 1-3 short lines, 3-5 relevant hashtags at the
@@ -57,12 +58,27 @@ Platform rules you always follow:
     identical wording. No hashtags, no emojis.
   - website_banner_headline: max 8 words, high impact.
   - website_banner_text: one supporting sentence with the offer + urgency.
-  - image_prompt: an art-direction prompt for an AI image generator.
-    Describe a premium promotional product photograph: the bottles/products
-    on a styled surface, lighting, mood, background, color palette. DO NOT
-    include any text, words, letters, logos, or human faces in the image
-    description (AI image models render text badly). Never mention brand
-    names — describe generic bottle shapes and drink types instead.
+
+  - image_prompt: art direction for a FINISHED, PROFESSIONAL SOCIAL-MEDIA AD —
+    NOT a plain studio product photo. Think of a polished festive ad you'd see
+    on a liquor store's Instagram. It MUST:
+      * Set a SCENE that matches the occasion (e.g. Labor Day backyard BBQ with
+        string lights and flags; New Year's Eve gold-and-black party table;
+        Christmas cozy fireplace; Cinco de Mayo colorful fiesta). Include
+        lifestyle elements — a beautifully styled table, seasonal props, warm
+        depth-of-field background, appropriate mood lighting.
+      * Feature the ACTUAL promoted products as hero bottles, described by their
+        real names and types (e.g. "a bottle of Ride Napa Cabernet Sauvignon",
+        "Dos Mesas Cristalino tequila") so they look specific, not generic.
+      * RENDER TEXT directly in the image, exactly as given, spelled correctly:
+        a bold HEADLINE (the occasion greeting or campaign name), the OFFER line
+        (the exact discount/price), and the STORE NAME. Specify where each sits
+        (e.g. headline on a wooden sign at top, offer on a chalkboard, store
+        name on a banner at the bottom). Keep total text short so it renders
+        cleanly.
+      * Name a color palette and overall style ("warm, inviting, premium but
+        approachable").
+    Adults 25+ only in any scene; classy, never excessive-drinking imagery.
 
 Alcohol advertising rules: never target minors, never encourage excessive
 drinking, keep everything classy.
@@ -81,20 +97,24 @@ no missing keys:
 
 
 def _build_user_prompt(strategy: AIStrategyReport) -> str:
-    """Feed the full strategy context so the copy is grounded in real data."""
+    """Feed the full strategy context so the copy AND image are grounded in real data."""
     products = json.dumps(strategy.products_to_promote)
+    occasion = strategy.occasion or strategy.strategy_title
     return f"""Store: {strategy.store_name}
 
 Promotion strategy to turn into ad creative:
+  - Occasion / theme: {occasion}
   - Campaign: {strategy.strategy_title}
   - Products to promote: {products}
-  - Offer: {strategy.recommended_offer}
+  - Offer (use the EXACT wording/price in the image): {strategy.recommended_offer}
   - Target customers: {strategy.target_customer_segment}
   - Why we're running this: {strategy.reason}
 
 Generate the complete ad creative package (all platforms + image_prompt).
-Use the actual product names in the copy. The tone should make a small
-neighborhood liquor store feel premium but approachable."""
+The image_prompt must produce a finished, festive, occasion-themed ad featuring
+the real products, with the headline, the exact offer, and the store name
+"{strategy.store_name}" rendered in the image — like a professional social post,
+not a plain bottle photo. Use the actual product names throughout."""
 
 
 # ─── Required fields validation ────────────────────────────────────────────────

@@ -343,7 +343,11 @@ export default function AIStrategy() {
     setError('')
     setGenerating(true)
     try {
-      await aiApi.generate({ dealId: focus === 'auto' ? null : focus })
+      const dealIds =
+        focus === 'auto' ? null
+        : focus === 'all' ? deals.map((d) => d.id)
+        : [focus]
+      await aiApi.generate({ dealIds })
       await load()
     } catch (err) {
       setError(err.response?.data?.detail ?? 'Failed to generate strategy.')
@@ -379,7 +383,8 @@ export default function AIStrategy() {
                 className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
               >
                 <option value="auto">Auto — upcoming holiday & best opportunity</option>
-                {deals.length > 0 && <optgroup label="A deal buy">
+                {deals.length > 1 && <option value="all">All deal buys — bundled closeout campaign (BOGO / mixed case)</option>}
+                {deals.length > 0 && <optgroup label="A single deal buy">
                   {deals.map((d) => <option key={d.id} value={d.id}>Deal: {d.product_name}</option>)}
                 </optgroup>}
               </select>

@@ -47,8 +47,12 @@ that's where these stores struggle and where most of their revenue is.
 Principles:
   - Lead with the OCCASION or OPPORTUNITY (an upcoming US holiday, a supplier
     deal buy, or a clear growth angle) — not with random slow items.
-  - When a DEAL BUY is provided, build the campaign around moving it: it's cheap,
-    so you can discount aggressively and STILL make strong margin. Say the margin.
+  - When DEAL BUYS are provided, build the campaign around moving them: they're
+    cheap, so you can discount aggressively and STILL make strong margin — state
+    the margin. If SEVERAL deal buys are given (e.g. multiple closeout wines),
+    BUNDLE them into one campaign: a mixed "closeout sale" table, a build-your-own
+    case (e.g. any 6 for $X), or a BOGO / buy-one-get-one that still nets healthy
+    margin because the cost basis is so low. Show the BOGO margin math.
   - Use the store's TOP SELLERS and strong categories to anchor bundles and
     cross-sells (people buy what they already come in for).
   - Offline tactics must be concrete: endcap/display placement, shelf-talkers,
@@ -111,13 +115,19 @@ def _build_user_prompt(
     deals: list[DealBuy],
     holidays: list[dict],
     slow_products: list[dict],
-    focus_deal: DealBuy | None,
+    focus_deals: list[DealBuy],
 ) -> str:
     parts = [f"Store: {store_name}", ""]
 
-    if focus_deal:
-        parts += ["PRIMARY FOCUS — build the campaign around this supplier deal buy:",
-                  f"  {_deal_context(focus_deal)}", ""]
+    if focus_deals:
+        if len(focus_deals) == 1:
+            parts += ["PRIMARY FOCUS — build the campaign around this supplier deal buy:",
+                      f"  {_deal_context(focus_deals[0])}", ""]
+        else:
+            parts += [f"PRIMARY FOCUS — BUNDLE these {len(focus_deals)} closeout deal buys "
+                      "into ONE campaign (mixed sale / build-your-own case / BOGO with margin math):"]
+            parts += [f"  - {_deal_context(d)}" for d in focus_deals]
+            parts.append("")
     elif holidays:
         h = holidays[0]
         parts += [f"PRIMARY FOCUS — the next big event is {h['name']} in {h['days_away']} days.",
@@ -168,12 +178,12 @@ async def generate_promotion_strategy(
     store_id: uuid.UUID,
     db: AsyncSession,
     limit: int = 5,
-    deal_id: uuid.UUID | None = None,
+    deal_ids: list[uuid.UUID] | None = None,
 ) -> AIStrategyReport:
     """
     Assemble rich context (top sellers, categories, deals, holidays, slow movers)
-    and generate a complete occasion-aware campaign. If deal_id is given, the
-    campaign centers on that deal buy.
+    and generate a complete occasion-aware campaign. If deal_ids are given, the
+    campaign centers on those deal buys (several = a bundled closeout campaign).
     """
     result = await db.execute(select(Store).where(Store.id == store_id))
     store = result.scalar_one_or_none()
@@ -186,10 +196,11 @@ async def generate_promotion_strategy(
     deals = await list_deals(store_id=store_id, db=db)
     holidays = get_upcoming_holidays(date.today(), days=45)
 
-    focus_deal = None
-    if deal_id:
-        focus_deal = next((d for d in deals if d.id == deal_id), None)
-        if focus_deal is None:
+    focus_deals: list[DealBuy] = []
+    if deal_ids:
+        wanted = set(deal_ids)
+        focus_deals = [d for d in deals if d.id in wanted]
+        if not focus_deals:
             raise ValueError("Deal buy not found")
 
     if not (top_products or deals or holidays):
@@ -198,11 +209,11 @@ async def generate_promotion_strategy(
             "or wait for an upcoming event."
         )
 
-    logger.info("Strategy 2.0 for store=%s (deal=%s, %d holidays, %d deals)",
-                store_id, bool(deal_id), len(holidays), len(deals))
+    logger.info("Strategy 2.0 for store=%s (focus_deals=%d, %d holidays, %d deals)",
+                store_id, len(focus_deals), len(holidays), len(deals))
 
     user_prompt = _build_user_prompt(
-        store.name, top_products, categories, deals, holidays, slow_products, focus_deal,
+        store.name, top_products, categories, deals, holidays, slow_products, focus_deals,
     )
     ai_data = await generate_json_response(SYSTEM_PROMPT, user_prompt)
     _validate(ai_data)

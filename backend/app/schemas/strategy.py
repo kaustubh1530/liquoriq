@@ -23,8 +23,10 @@ class GeneratePromotionRequest(BaseModel):
     - deal_id: if set, the campaign is built around that supplier deal buy
     """
     limit: int = Field(default=5, ge=1, le=20)
-    deal_id: uuid.UUID | None = Field(
-        default=None, description="Center the campaign on this deal buy")
+    deal_ids: list[uuid.UUID] | None = Field(
+        default=None,
+        description="Center the campaign on these deal buys (one, or several closeouts bundled together)",
+    )
 
 
 # ─── GET /ai/strategies  &  GET /ai/strategies/{id} ──────────────────────────
@@ -37,9 +39,9 @@ class StrategyResponse(BaseModel):
     id: uuid.UUID
     store_id: uuid.UUID
 
-    # What was sent to the AI
+    # What was sent to the AI (Strategy 2.0: an object with top_products + deals)
     store_name: str
-    products_analyzed: list[Any]        # list of dicts with product data
+    products_analyzed: Any
 
     # AI-generated promotion plan
     strategy_title: str
