@@ -104,7 +104,7 @@ def _require_owner(user: User) -> None:
     "",
     response_model=StoreResponse,
     status_code=status.HTTP_201_CREATED,
-    summary="Create a store (owners can have several)",
+    summary="Create this account's store (one store per login)",
 )
 async def create_store(
     store_data: StoreCreate,
@@ -112,6 +112,14 @@ async def create_store(
     db: AsyncSession = Depends(get_db),
 ) -> Store:
     _require_owner(current_user)
+    # One store per account. Separate businesses = separate logins; they connect
+    # only through exchange codes (Transfers), never as co-owned stores.
+    existing = await db.execute(select(Store).where(Store.owner_id == current_user.id))
+    if existing.scalar_one_or_none():
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            detail="This account already has a store. Each store uses its own login.",
+        )
     new_store = Store(owner_id=current_user.id, **store_data.model_dump())
     db.add(new_store)
     await db.flush()
