@@ -152,11 +152,20 @@ export const analyticsApi = {
 // ── AI endpoints ──────────────────────────────────────────────────────────────
 
 export const aiApi = {
-  generate: (limit = 5) => api.post('/ai/generate-promotion', { limit }),
+  // Phase 15: optional deal_id centers the campaign on a supplier deal buy
+  generate: (opts = {}) => api.post('/ai/generate-promotion', { limit: opts.limit ?? 5, deal_id: opts.dealId ?? null }),
   list: () => api.get('/ai/strategies'),
   get: (id) => api.get(`/ai/strategies/${id}`),
   // Phase 12: campaign ROI — lift vs pre-campaign baseline, derived live
   performance: (id) => api.get(`/ai/strategies/${id}/performance`),
+}
+
+// ── Deal buys (Phase 15: supplier closeouts → high-margin campaigns) ──────────
+
+export const dealApi = {
+  list: () => api.get('/deals'),
+  create: (data) => api.post('/deals', data),
+  remove: (id) => api.delete(`/deals/${id}`),
 }
 
 // ── Ad Creative endpoints ─────────────────────────────────────────────────────

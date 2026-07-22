@@ -29,6 +29,7 @@ export default defineConfig({
       '/ai':        backend,
       '/creative':  backend,
       '/transfers': backend,
+      '/deals':     backend,
       '/static':    backend,
       '/reports':   backend,
     },

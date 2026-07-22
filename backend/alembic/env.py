@@ -32,6 +32,7 @@ from app.models import user, store, uploaded_report, normalized_sale  # noqa: F4
 from app.models import ai_strategy_report  # noqa: F401 — Phase 7
 from app.models import ad_creative  # noqa: F401 — Phase 10
 from app.models import transfer  # noqa: F401 — Phase 14
+from app.models import deal_buy  # noqa: F401 — Phase 15
 
 settings_app = get_settings()
 

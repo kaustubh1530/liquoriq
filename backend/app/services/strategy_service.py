@@ -1,159 +1,216 @@
 """
-services/strategy_service.py — AI promotion strategy orchestration
+services/strategy_service.py — AI promotion strategy 2.0 (Phase 15)
 
-This is the core of Phase 7. It:
-  1. Pulls the store's slow-moving products from analytics_service
-  2. Builds a detailed prompt with the real product data
-  3. Calls OpenAI via openai_service and gets back a structured JSON strategy
-  4. Validates every expected field is present in the response
-  5. Saves the full strategy to ai_strategy_reports
-  6. Returns the saved ORM object to the route layer
+Rebuilt after real-owner feedback: "slowest item" was the wrong signal — the
+long tail isn't what a store owner cares about. Real growth for a US liquor
+store comes from:
+  1. UPCOMING HOLIDAYS/EVENTS — the calendar drives alcohol sales.
+  2. SUPPLIER DEAL BUYS — cheap closeout stock = high-margin promo weapons.
+  3. LEANING INTO STRENGTH — top sellers & strong categories, not dead SKUs.
+  4. OFFLINE + ONLINE — in-store tactics (where they struggle most) PLUS
+     online listing copy (Vivino, social, delivery apps).
 
-Why save to DB instead of returning directly?
-  - The store owner can view all past strategies (GET /ai/strategies)
-  - We avoid re-calling OpenAI if the user refreshes the page
-  - We have an audit trail for every strategy ever generated
+The engine assembles this context and asks GPT-4o for a complete campaign:
+occasion, offer, products, offline plan, online plan, Vivino listing, and
+ready-to-send SMS/email/social copy.
 """
 
 import json
 import logging
 import uuid
+from datetime import date
 
-from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.ai_strategy_report import AIStrategyReport
+from app.models.deal_buy import DealBuy
 from app.models.store import Store
-from app.services.analytics_service import get_slow_products
+from app.services.analytics_service import (
+    get_category_performance,
+    get_slow_products,
+    get_top_products,
+)
+from app.services.deal_service import list_deals
+from app.services.holiday_calendar import get_upcoming_holidays
 from app.services.openai_service import generate_json_response
 
 logger = logging.getLogger(__name__)
 
-# ─── Prompt templates ──────────────────────────────────────────────────────────
+# ─── Prompt ────────────────────────────────────────────────────────────────────
 
-SYSTEM_PROMPT = """You are a retail growth strategist specializing in independent
-liquor stores. You generate practical, actionable promotion campaigns based on
-sales data.
+SYSTEM_PROMPT = """You are a growth strategist for independent US liquor stores.
+You design practical, profitable promotion campaigns a small neighborhood store
+can actually run — with a strong focus on OFFLINE / in-store execution, because
+that's where these stores struggle and where most of their revenue is.
 
-Always respond with valid JSON matching EXACTLY this schema — no extra keys,
-no missing keys:
+Principles:
+  - Lead with the OCCASION or OPPORTUNITY (an upcoming US holiday, a supplier
+    deal buy, or a clear growth angle) — not with random slow items.
+  - When a DEAL BUY is provided, build the campaign around moving it: it's cheap,
+    so you can discount aggressively and STILL make strong margin. Say the margin.
+  - Use the store's TOP SELLERS and strong categories to anchor bundles and
+    cross-sells (people buy what they already come in for).
+  - Offline tactics must be concrete: endcap/display placement, shelf-talkers,
+    counter bundles, window signage, "ask at register" upsells, in-store tastings.
+  - Online tactics: social posts, delivery-app (Uber Eats/DoorDash) features, and
+    a Vivino-ready listing for any wine (rich tasting notes help it sell online).
+  - Respect responsible alcohol marketing: never target minors, never encourage
+    excessive drinking, keep it classy.
+
+Respond with valid JSON matching EXACTLY this schema — no extra keys, no missing keys:
 {
+  "occasion": "string — what this campaign is built around",
+  "strategy_type": "holiday | deal | growth",
   "strategy_title": "string — catchy campaign name",
   "products_to_promote": ["string", ...],
-  "reason": "string — why these products need promotion",
+  "reason": "string — why this will grow revenue now",
   "target_customer_segment": "string — who to target",
-  "recommended_offer": "string — discount or bundle mechanic",
+  "recommended_offer": "string — the offer + note the margin if a deal buy is used",
+  "offline_plan": "string — concrete in-store execution steps",
+  "online_plan": "string — social + delivery-app tactics",
+  "vivino_listing": "string — Vivino/online product listing copy (tasting notes, pairings); empty string if no wine involved",
   "sms_copy": "string — under 160 chars, no emojis",
-  "email_subject": "string — compelling email subject line",
+  "email_subject": "string — compelling subject line",
   "email_body": "string — 2-3 sentence email body",
-  "social_caption": "string — Instagram/Facebook caption",
-  "expected_impact": "string — realistic expected business outcome"
+  "social_caption": "string — Instagram/Facebook caption with a few hashtags",
+  "expected_impact": "string — realistic expected outcome"
 }"""
 
-
-def _build_user_prompt(store_name: str, products: list[dict]) -> str:
-    """
-    Convert real sales data into a specific, grounded prompt.
-    Injecting actual numbers (revenue, units sold) anchors the AI
-    to reality instead of generating generic advice.
-    """
-    products_text = json.dumps(products, indent=2)
-    return f"""Store: {store_name}
-
-The following products have the LOWEST sales revenue recently.
-They need a promotion to move inventory and improve sales velocity.
-
-Slow-moving products (with sales data):
-{products_text}
-
-Generate a promotion strategy campaign. Be specific — use the actual product
-names in your response. The offer should be realistic for a small liquor store
-(percentage discount, buy-one-get-one, bundle, etc.)."""
-
-
-# ─── Required fields validation ────────────────────────────────────────────────
-
 REQUIRED_FIELDS = {
-    "strategy_title",
-    "products_to_promote",
-    "reason",
-    "target_customer_segment",
-    "recommended_offer",
-    "sms_copy",
-    "email_subject",
-    "email_body",
-    "social_caption",
+    "occasion", "strategy_type", "strategy_title", "products_to_promote", "reason",
+    "target_customer_segment", "recommended_offer", "offline_plan", "online_plan",
+    "vivino_listing", "sms_copy", "email_subject", "email_body", "social_caption",
     "expected_impact",
 }
 
 
-def _validate_strategy(data: dict) -> None:
-    """Raise ValueError if any required field is missing or empty."""
+def _validate(data: dict) -> None:
     missing = REQUIRED_FIELDS - set(data.keys())
     if missing:
         raise ValueError(f"OpenAI response missing fields: {missing}")
-    empty = [k for k in REQUIRED_FIELDS if not data.get(k)]
+    # vivino_listing may be empty; everything else must be non-empty
+    empty = [k for k in REQUIRED_FIELDS if k != "vivino_listing" and not data.get(k)]
     if empty:
         raise ValueError(f"OpenAI response has empty fields: {empty}")
 
 
-# ─── Public service functions ──────────────────────────────────────────────────
+def _deal_context(deal: DealBuy) -> str:
+    margin = ""
+    if deal.normal_price and deal.cost_price:
+        margin_pct = round((float(deal.normal_price) - float(deal.cost_price)) / float(deal.normal_price) * 100)
+        margin = f" (normal ${deal.normal_price}, ~{margin_pct}% margin even at a discount)"
+    qty = f", {deal.quantity} units to move" if deal.quantity else ""
+    return f"{deal.product_name} — bought at ${deal.cost_price}/unit{margin}{qty}"
+
+
+def _build_user_prompt(
+    store_name: str,
+    top_products: list[dict],
+    categories: list[dict],
+    deals: list[DealBuy],
+    holidays: list[dict],
+    slow_products: list[dict],
+    focus_deal: DealBuy | None,
+) -> str:
+    parts = [f"Store: {store_name}", ""]
+
+    if focus_deal:
+        parts += ["PRIMARY FOCUS — build the campaign around this supplier deal buy:",
+                  f"  {_deal_context(focus_deal)}", ""]
+    elif holidays:
+        h = holidays[0]
+        parts += [f"PRIMARY FOCUS — the next big event is {h['name']} in {h['days_away']} days.",
+                  f"  Why it matters: {h['why']}",
+                  f"  What sells: {h['push']}", ""]
+
+    if holidays:
+        parts.append("Upcoming US events (next ~45 days):")
+        for h in holidays[:5]:
+            parts.append(f"  - {h['name']} ({h['days_away']}d): {h['push']}")
+        parts.append("")
+
+    if deals:
+        parts.append("Supplier deal buys available (cheap stock = high-margin promos):")
+        for d in deals[:8]:
+            parts.append(f"  - {_deal_context(d)}")
+        parts.append("")
+
+    if top_products:
+        parts.append("Store's TOP SELLERS (anchor bundles/cross-sells on these strengths):")
+        for p in top_products[:8]:
+            parts.append(f"  - {p['product_name']} ({p.get('category') or 'n/a'}): ${p['total_revenue']} revenue")
+        parts.append("")
+
+    if categories:
+        parts.append("Category performance:")
+        for c in categories[:6]:
+            parts.append(f"  - {c['category']}: ${c['total_revenue']} ({c['revenue_percentage']}%)")
+        parts.append("")
+
+    if slow_products:
+        parts.append("Slow movers (only clear these if it fits the campaign — secondary):")
+        for p in slow_products[:5]:
+            parts.append(f"  - {p['product_name']}: ${p['total_revenue']} revenue")
+        parts.append("")
+
+    parts.append(
+        "Design ONE focused campaign. Be specific with real product names. Emphasize "
+        "concrete OFFLINE in-store execution, and include online + Vivino copy. Make the "
+        "offer realistic and profitable for a small store."
+    )
+    return "\n".join(parts)
+
+
+# ─── Public API ────────────────────────────────────────────────────────────────
 
 async def generate_promotion_strategy(
     store_id: uuid.UUID,
     db: AsyncSession,
     limit: int = 5,
+    deal_id: uuid.UUID | None = None,
 ) -> AIStrategyReport:
     """
-    Full pipeline: fetch slow products → build prompt → call AI → save to DB.
-
-    Args:
-        store_id: The store requesting the strategy (from JWT)
-        db:       Async DB session
-        limit:    How many slow products to send to the AI (default 5)
-
-    Returns:
-        The saved AIStrategyReport ORM object
-
-    Raises:
-        ValueError  — if no sales data exists yet, or AI returns bad JSON
-        RuntimeError — if OpenAI API fails
+    Assemble rich context (top sellers, categories, deals, holidays, slow movers)
+    and generate a complete occasion-aware campaign. If deal_id is given, the
+    campaign centers on that deal buy.
     """
-    # 1. Fetch store name
     result = await db.execute(select(Store).where(Store.id == store_id))
     store = result.scalar_one_or_none()
     if not store:
         raise ValueError("Store not found")
 
-    # 2. Get slow-moving products
+    top_products = await get_top_products(store_id=store_id, db=db, limit=10)
+    categories = await get_category_performance(store_id=store_id, db=db)
     slow_products = await get_slow_products(store_id=store_id, db=db, limit=limit)
-    if not slow_products:
+    deals = await list_deals(store_id=store_id, db=db)
+    holidays = get_upcoming_holidays(date.today(), days=45)
+
+    focus_deal = None
+    if deal_id:
+        focus_deal = next((d for d in deals if d.id == deal_id), None)
+        if focus_deal is None:
+            raise ValueError("Deal buy not found")
+
+    if not (top_products or deals or holidays):
         raise ValueError(
-            "No sales data found. Upload and parse at least one report first."
+            "Not enough context yet. Upload a sales report, add a deal buy, "
+            "or wait for an upcoming event."
         )
 
-    logger.info(
-        "Generating strategy for store=%s with %d products",
-        store_id,
-        len(slow_products),
-    )
+    logger.info("Strategy 2.0 for store=%s (deal=%s, %d holidays, %d deals)",
+                store_id, bool(deal_id), len(holidays), len(deals))
 
-    # 3. Build prompts and call OpenAI
-    system_prompt = SYSTEM_PROMPT
     user_prompt = _build_user_prompt(
-        store_name=store.name,
-        products=slow_products,
+        store.name, top_products, categories, deals, holidays, slow_products, focus_deal,
     )
-    ai_data = await generate_json_response(system_prompt, user_prompt)
+    ai_data = await generate_json_response(SYSTEM_PROMPT, user_prompt)
+    _validate(ai_data)
 
-    # 4. Validate the response
-    _validate_strategy(ai_data)
-
-    # 5. Save to database
     report = AIStrategyReport(
         store_id=store_id,
         store_name=store.name,
-        products_analyzed=slow_products,
+        products_analyzed={"top_products": top_products, "deals": [d.product_name for d in deals]},
         strategy_title=ai_data["strategy_title"],
         products_to_promote=ai_data["products_to_promote"],
         reason=ai_data["reason"],
@@ -164,21 +221,21 @@ async def generate_promotion_strategy(
         email_body=ai_data["email_body"],
         social_caption=ai_data["social_caption"],
         expected_impact=ai_data["expected_impact"],
+        occasion=ai_data["occasion"],
+        strategy_type=ai_data["strategy_type"],
+        offline_plan=ai_data["offline_plan"],
+        online_plan=ai_data["online_plan"],
+        vivino_listing=ai_data.get("vivino_listing") or None,
         model_used=str(ai_data.get("model_used", "gpt-4o")),
     )
     db.add(report)
     await db.commit()
     await db.refresh(report)
-
-    logger.info("Strategy saved: id=%s title=%s", report.id, report.strategy_title)
+    logger.info("Strategy 2.0 saved: id=%s occasion=%s", report.id, report.occasion)
     return report
 
 
-async def get_all_strategies(
-    store_id: uuid.UUID,
-    db: AsyncSession,
-) -> list[AIStrategyReport]:
-    """Return all past strategies for this store, newest first."""
+async def get_all_strategies(store_id: uuid.UUID, db: AsyncSession) -> list[AIStrategyReport]:
     result = await db.execute(
         select(AIStrategyReport)
         .where(AIStrategyReport.store_id == store_id)
@@ -188,11 +245,8 @@ async def get_all_strategies(
 
 
 async def get_strategy_by_id(
-    strategy_id: uuid.UUID,
-    store_id: uuid.UUID,
-    db: AsyncSession,
+    strategy_id: uuid.UUID, store_id: uuid.UUID, db: AsyncSession,
 ) -> AIStrategyReport | None:
-    """Return a single strategy, ensuring it belongs to this store."""
     result = await db.execute(
         select(AIStrategyReport).where(
             AIStrategyReport.id == strategy_id,

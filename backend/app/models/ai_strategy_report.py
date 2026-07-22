@@ -59,6 +59,19 @@ class AIStrategyReport(Base):
     social_caption: Mapped[str] = mapped_column(Text, nullable=False)
     expected_impact: Mapped[str] = mapped_column(Text, nullable=False)
 
+    # ── Strategy 2.0 (Phase 15): occasion-aware, offline + online ─────────────
+    occasion: Mapped[str | None] = mapped_column(
+        String(255), nullable=True,
+        comment="What the campaign is built around: a holiday, a deal buy, or growth")
+    strategy_type: Mapped[str | None] = mapped_column(
+        String(30), nullable=True, comment="holiday | deal | growth")
+    offline_plan: Mapped[str | None] = mapped_column(
+        Text, nullable=True, comment="In-store tactics: displays, bundles, signage, tastings")
+    online_plan: Mapped[str | None] = mapped_column(
+        Text, nullable=True, comment="Online tactics: social, delivery apps")
+    vivino_listing: Mapped[str | None] = mapped_column(
+        Text, nullable=True, comment="Vivino / online-ready product listing copy")
+
     # ── Meta ──────────────────────────────────────────────────────────────────
     model_used: Mapped[str] = mapped_column(String(50), nullable=False, default="gpt-4o")
     created_at: Mapped[datetime] = mapped_column(

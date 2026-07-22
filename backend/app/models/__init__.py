@@ -7,3 +7,4 @@ from app.models.normalized_sale import NormalizedSale  # noqa: F401
 from app.models.ai_strategy_report import AIStrategyReport  # noqa: F401
 from app.models.ad_creative import AdCreative  # noqa: F401
 from app.models.transfer import Transfer, TransferItem, TransferPartner, SettlementPayment  # noqa: F401
+from app.models.deal_buy import DealBuy  # noqa: F401

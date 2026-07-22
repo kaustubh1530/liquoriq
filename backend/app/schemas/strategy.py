@@ -18,15 +18,13 @@ from pydantic import BaseModel, Field
 
 class GeneratePromotionRequest(BaseModel):
     """
-    Optional filters the store owner can pass when requesting a promotion.
-    If limit is omitted, we default to top 5 slow-moving products.
+    Options for generating a campaign (Strategy 2.0).
+    - limit: how many slow movers to include as secondary clearance context
+    - deal_id: if set, the campaign is built around that supplier deal buy
     """
-    limit: int = Field(
-        default=5,
-        ge=1,
-        le=20,
-        description="How many slow-moving products to include in the AI context",
-    )
+    limit: int = Field(default=5, ge=1, le=20)
+    deal_id: uuid.UUID | None = Field(
+        default=None, description="Center the campaign on this deal buy")
 
 
 # ─── GET /ai/strategies  &  GET /ai/strategies/{id} ──────────────────────────
@@ -55,6 +53,13 @@ class StrategyResponse(BaseModel):
     social_caption: str
     expected_impact: str
 
+    # Strategy 2.0 (Phase 15)
+    occasion: str | None = None
+    strategy_type: str | None = None
+    offline_plan: str | None = None
+    online_plan: str | None = None
+    vivino_listing: str | None = None
+
     # Meta
     model_used: str
     created_at: datetime
@@ -72,6 +77,8 @@ class StrategyListItem(BaseModel):
     strategy_title: str
     products_to_promote: list[Any]
     recommended_offer: str
+    occasion: str | None = None
+    strategy_type: str | None = None
     model_used: str
     created_at: datetime
 
