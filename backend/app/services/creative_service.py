@@ -62,22 +62,26 @@ Platform rules you always follow:
   - image_prompt: art direction for a FINISHED, PROFESSIONAL SOCIAL-MEDIA AD —
     NOT a plain studio product photo. Think of a polished festive ad you'd see
     on a liquor store's Instagram. It MUST:
-      * Set a SCENE that matches the occasion (e.g. Labor Day backyard BBQ with
-        string lights and flags; New Year's Eve gold-and-black party table;
-        Christmas cozy fireplace; Cinco de Mayo colorful fiesta). Include
-        lifestyle elements — a beautifully styled table, seasonal props, warm
-        depth-of-field background, appropriate mood lighting.
-      * Feature the ACTUAL promoted products as hero bottles, described by their
-        real names and types (e.g. "a bottle of Ride Napa Cabernet Sauvignon",
-        "Dos Mesas Cristalino tequila") so they look specific, not generic.
+      * Set a rich, CREATIVE SCENE that matches the occasion (e.g. Labor Day
+        backyard BBQ with string lights and flags; New Year's Eve gold-and-black
+        party table with confetti; Christmas cozy fireplace with garland;
+        Cinco de Mayo colorful fiesta). Include lifestyle elements, seasonal
+        props, a beautifully styled surface, warm depth-of-field background,
+        and cinematic mood lighting. Be imaginative and eye-catching.
+      * Feature ONE HERO PRODUCT — the single primary promoted item — front and
+        center, sharply lit, described by its real name and type (e.g. "a bottle
+        of Booker's Bourbon as the clear hero"). You may add ONE or two poured
+        glasses or a garnish, but DO NOT add other/unrelated liquor brands or a
+        clutter of random bottles. The one promoted product is the star.
       * RENDER TEXT directly in the image, exactly as given, spelled correctly:
-        a bold HEADLINE (the occasion greeting or campaign name), the OFFER line
-        (the exact discount/price), and the STORE NAME. Specify where each sits
-        (e.g. headline on a wooden sign at top, offer on a chalkboard, store
-        name on a banner at the bottom). Keep total text short so it renders
-        cleanly.
-      * Name a color palette and overall style ("warm, inviting, premium but
-        approachable").
+        a bold HEADLINE (occasion/campaign name), the CUSTOMER-FACING OFFER
+        (only the sale price or discount, e.g. "$89.99" or "20% OFF"), and the
+        STORE NAME. Place each cleanly (headline on a top sign, offer on a
+        chalkboard, store name on a bottom banner). Keep text short.
+      * ABSOLUTELY NEVER render cost price, margin, profit, "margin", percentages
+        of margin, or any internal/owner-only number. Those are confidential —
+        the customer sees ONLY the sale price or discount.
+      * Name a color palette and style ("warm, inviting, premium but approachable").
     Adults 25+ only in any scene; classy, never excessive-drinking imagery.
 
 Alcohol advertising rules: never target minors, never encourage excessive
@@ -96,25 +100,45 @@ no missing keys:
 }"""
 
 
+def _strip_internal_numbers(offer: str) -> str:
+    """
+    Remove owner-only clauses (margin/cost/profit) from the offer before it can
+    reach the IMAGE. Customers must only ever see the sale price or discount.
+    Splits the offer on separators and drops any clause mentioning those terms.
+    e.g. "BOGO free — still 55% margin at $2 cost" → "BOGO free".
+    """
+    import re
+    INTERNAL = re.compile(r"\b(margin|cost|profit|markup|wholesale)\b", re.I)
+    # Split on ( ) [ ] — , ; while keeping customer-facing clauses
+    clauses = re.split(r"[()\[\]—;]|,(?=\s)", offer)
+    kept = [c.strip() for c in clauses if c.strip() and not INTERNAL.search(c)]
+    result = ", ".join(kept)
+    return re.sub(r"\s{2,}", " ", result).strip(" -—,;") or offer.split("(")[0].strip()
+
+
 def _build_user_prompt(strategy: AIStrategyReport) -> str:
     """Feed the full strategy context so the copy AND image are grounded in real data."""
-    products = json.dumps(strategy.products_to_promote)
+    product_list = list(strategy.products_to_promote or [])
+    hero = product_list[0] if product_list else "the promoted bottle"
+    products = json.dumps(product_list)
     occasion = strategy.occasion or strategy.strategy_title
+    customer_offer = _strip_internal_numbers(strategy.recommended_offer)
     return f"""Store: {strategy.store_name}
 
 Promotion strategy to turn into ad creative:
   - Occasion / theme: {occasion}
   - Campaign: {strategy.strategy_title}
-  - Products to promote: {products}
-  - Offer (use the EXACT wording/price in the image): {strategy.recommended_offer}
+  - Products to promote (for the COPY): {products}
+  - HERO product for the IMAGE (feature ONLY this one bottle, no other brands): {hero}
+  - Customer-facing offer for the IMAGE (sale price / discount ONLY): {customer_offer}
+  - Full offer for the COPY text (may mention value, never margin on the image): {strategy.recommended_offer}
   - Target customers: {strategy.target_customer_segment}
-  - Why we're running this: {strategy.reason}
 
 Generate the complete ad creative package (all platforms + image_prompt).
-The image_prompt must produce a finished, festive, occasion-themed ad featuring
-the real products, with the headline, the exact offer, and the store name
-"{strategy.store_name}" rendered in the image — like a professional social post,
-not a plain bottle photo. Use the actual product names throughout."""
+The image_prompt must produce a finished, festive, occasion-themed ad with "{hero}"
+as the single hero product, the headline, the CUSTOMER-FACING offer, and the store
+name "{strategy.store_name}" rendered in the image — like a professional social post.
+NEVER put cost, margin, or profit numbers in the image. Use real product names in copy."""
 
 
 # ─── Required fields validation ────────────────────────────────────────────────
