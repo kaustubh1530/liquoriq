@@ -56,6 +56,7 @@ async def generate_creative(
             store_id=current_store.id,
             db=db,
             offer_override=body.offer_override,
+            instructions=body.instructions,
         )
     except ValueError as e:
         # Strategy not found → 404; bad AI output → 422

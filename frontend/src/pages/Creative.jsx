@@ -44,6 +44,7 @@ export default function Creative() {
   const [selectedId, setSelectedId] = useState(preselected ?? '')
   const [creative, setCreative] = useState(null)
   const [offer, setOffer] = useState('')          // exact promo price/offer to render
+  const [instructions, setInstructions] = useState('')  // owner art-direction hints
   const [loading, setLoading] = useState(true)
   const [generating, setGenerating] = useState(false)
   const [error, setError] = useState('')
@@ -82,7 +83,7 @@ export default function Creative() {
     setError('')
     setGenerating(true)
     try {
-      const { data } = await creativeApi.generate(selectedId, offer.trim() || null)
+      const { data } = await creativeApi.generate(selectedId, offer.trim() || null, instructions.trim() || null)
       setCreative(data)
     } catch (err) {
       setError(err.response?.data?.detail ?? 'Failed to generate creative.')
@@ -147,6 +148,19 @@ export default function Creative() {
                 <p className="text-[11px] text-gray-400 mt-1">
                   This exact price is rendered into the image. Change it and Regenerate to update the ad.
                 </p>
+              </div>
+
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">
+                  How should the ad look? <span className="text-gray-300">(optional — theme, event, layout, mood, changes)</span>
+                </label>
+                <textarea
+                  value={instructions}
+                  onChange={(e) => setInstructions(e.target.value)}
+                  rows={2}
+                  placeholder="e.g. Make it a Christmas theme with snow and a fireplace. Bigger price tag. Warmer, gold tones. Show a festive cocktail beside the bottle."
+                  className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500 resize-none"
+                />
               </div>
 
               <button

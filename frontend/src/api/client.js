@@ -152,10 +152,16 @@ export const analyticsApi = {
 // ── AI endpoints ──────────────────────────────────────────────────────────────
 
 export const aiApi = {
-  // Phase 15: optional deal_ids center the campaign on one or several deal buys
-  generate: (opts = {}) => api.post('/ai/generate-promotion', { limit: opts.limit ?? 5, deal_ids: opts.dealIds ?? null }),
+  // Phase 15: steerable — deal_ids, a chosen occasion, and a free-text brief
+  generate: (opts = {}) => api.post('/ai/generate-promotion', {
+    limit: opts.limit ?? 5,
+    deal_ids: opts.dealIds ?? null,
+    occasion: opts.occasion ?? null,
+    instructions: opts.instructions ?? null,
+  }),
   list: () => api.get('/ai/strategies'),
   get: (id) => api.get(`/ai/strategies/${id}`),
+  holidays: () => api.get('/ai/holidays'),
   // Phase 12: campaign ROI — lift vs pre-campaign baseline, derived live
   performance: (id) => api.get(`/ai/strategies/${id}/performance`),
 }
@@ -171,9 +177,9 @@ export const dealApi = {
 // ── Ad Creative endpoints ─────────────────────────────────────────────────────
 
 export const creativeApi = {
-  // gpt-image-1 + GPT-4o — slow call, 40-60s. offer overrides the price rendered on the ad.
-  generate: (strategyId, offerOverride = null) =>
-    api.post('/creative/generate', { strategy_id: strategyId, offer_override: offerOverride }),
+  // gpt-image-1 + GPT-4o — slow call, 40-60s. offer + instructions steer the ad.
+  generate: (strategyId, offerOverride = null, instructions = null) =>
+    api.post('/creative/generate', { strategy_id: strategyId, offer_override: offerOverride, instructions }),
   // Latest creative for a strategy — 404 if none generated yet
   get: (strategyId) => api.get(`/creative/${strategyId}`),
   // Phase 11: price prefill from the store's own sales data

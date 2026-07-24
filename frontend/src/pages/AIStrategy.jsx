@@ -319,16 +319,20 @@ function DealBuys({ deals, onChange }) {
 export default function AIStrategy() {
   const [strategies, setStrategies] = useState([])
   const [deals, setDeals] = useState([])
+  const [holidays, setHolidays] = useState([])
   const [loading, setLoading] = useState(true)
   const [generating, setGenerating] = useState(false)
   const [error, setError] = useState('')
-  const [focus, setFocus] = useState('auto')   // 'auto' | deal id
+  const [focus, setFocus] = useState('auto')     // 'auto' | 'all' | deal id
+  const [occasion, setOccasion] = useState('')   // '' = auto; holiday name; or custom
+  const [brief, setBrief] = useState('')         // free-text instructions
 
   const load = async () => {
     try {
-      const [s, d] = await Promise.all([aiApi.list(), dealApi.list()])
+      const [s, d, h] = await Promise.all([aiApi.list(), dealApi.list(), aiApi.holidays()])
       setStrategies(s.data)
       setDeals(d.data)
+      setHolidays(h.data)
     } catch {
       // ignore
     } finally {
@@ -347,7 +351,11 @@ export default function AIStrategy() {
         focus === 'auto' ? null
         : focus === 'all' ? deals.map((d) => d.id)
         : [focus]
-      await aiApi.generate({ dealIds })
+      await aiApi.generate({
+        dealIds,
+        occasion: occasion.trim() || null,
+        instructions: brief.trim() || null,
+      })
       await load()
     } catch (err) {
       setError(err.response?.data?.detail ?? 'Failed to generate strategy.')
@@ -374,21 +382,50 @@ export default function AIStrategy() {
             <h2 className="text-sm font-semibold text-gray-700">Generate new campaign</h2>
           </div>
           {error && <div className="mb-4 p-3 rounded-xl bg-red-50 text-red-600 text-sm">{error}</div>}
-          <div className="flex items-end gap-4 flex-wrap">
-            <div className="flex-1 min-w-56">
-              <label className="block text-xs text-gray-500 mb-1">Build the campaign around…</label>
-              <select
-                value={focus}
-                onChange={(e) => setFocus(e.target.value)}
-                className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
-              >
-                <option value="auto">Auto — upcoming holiday & best opportunity</option>
-                {deals.length > 1 && <option value="all">All deal buys — bundled closeout campaign (BOGO / mixed case)</option>}
-                {deals.length > 0 && <optgroup label="A single deal buy">
-                  {deals.map((d) => <option key={d.id} value={d.id}>Deal: {d.product_name}</option>)}
-                </optgroup>}
-              </select>
+          <div className="space-y-4">
+            <div className="flex gap-4 flex-wrap">
+              <div className="flex-1 min-w-56">
+                <label className="block text-xs text-gray-500 mb-1">Build the campaign around…</label>
+                <select
+                  value={focus}
+                  onChange={(e) => setFocus(e.target.value)}
+                  className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
+                >
+                  <option value="auto">Auto — best opportunity</option>
+                  {deals.length > 1 && <option value="all">All deal buys — bundled closeout campaign (BOGO / mixed case)</option>}
+                  {deals.length > 0 && <optgroup label="A single deal buy">
+                    {deals.map((d) => <option key={d.id} value={d.id}>Deal: {d.product_name}</option>)}
+                  </optgroup>}
+                </select>
+              </div>
+              <div className="flex-1 min-w-56">
+                <label className="block text-xs text-gray-500 mb-1">Event / occasion <span className="text-gray-300">(optional)</span></label>
+                <input
+                  list="occasion-list"
+                  value={occasion}
+                  onChange={(e) => setOccasion(e.target.value)}
+                  placeholder="Auto · or pick / type an event"
+                  className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
+                />
+                <datalist id="occasion-list">
+                  {holidays.map((h) => <option key={h.key} value={h.name}>{`${h.name} (${h.days_away}d)`}</option>)}
+                </datalist>
+              </div>
             </div>
+
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">
+                Anything specific? <span className="text-gray-300">(optional brief — new release, a set offer/price, target audience…)</span>
+              </label>
+              <textarea
+                value={brief}
+                onChange={(e) => setBrief(e.target.value)}
+                rows={2}
+                placeholder="e.g. We just got the new Blanton's release — push it. Run a BOGO on the closeout wines at $12. Target wedding-season buyers."
+                className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500 resize-none"
+              />
+            </div>
+
             <button
               onClick={handleGenerate}
               disabled={generating}

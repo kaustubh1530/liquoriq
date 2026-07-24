@@ -116,10 +116,22 @@ def _build_user_prompt(
     holidays: list[dict],
     slow_products: list[dict],
     focus_deals: list[DealBuy],
+    occasion: str | None = None,
+    instructions: str | None = None,
 ) -> str:
     parts = [f"Store: {store_name}", ""]
 
-    if focus_deals:
+    # Owner-chosen event takes top priority (a specific holiday or a custom event)
+    if occasion:
+        parts += [f"PRIMARY FOCUS — build the campaign around this event: {occasion}."]
+        match = next((h for h in holidays if occasion.lower() in h["name"].lower()), None)
+        if match:
+            parts.append(f"  ({match['name']} in {match['days_away']} days — {match['why']} Push: {match['push']})")
+        if focus_deals:
+            parts.append("  Also feature these deal buys in it:")
+            parts += [f"    - {_deal_context(d)}" for d in focus_deals]
+        parts.append("")
+    elif focus_deals:
         if len(focus_deals) == 1:
             parts += ["PRIMARY FOCUS — build the campaign around this supplier deal buy:",
                       f"  {_deal_context(focus_deals[0])}", ""]
@@ -164,6 +176,10 @@ def _build_user_prompt(
             parts.append(f"  - {p['product_name']}: ${p['total_revenue']} revenue")
         parts.append("")
 
+    if instructions:
+        parts += ["", "OWNER INSTRUCTIONS — follow these closely (they override defaults):",
+                  f"  {instructions}", ""]
+
     parts.append(
         "Design ONE focused campaign. Be specific with real product names. Emphasize "
         "concrete OFFLINE in-store execution, and include online + Vivino copy. Make the "
@@ -179,6 +195,8 @@ async def generate_promotion_strategy(
     db: AsyncSession,
     limit: int = 5,
     deal_ids: list[uuid.UUID] | None = None,
+    occasion: str | None = None,
+    instructions: str | None = None,
 ) -> AIStrategyReport:
     """
     Assemble rich context (top sellers, categories, deals, holidays, slow movers)
@@ -214,6 +232,8 @@ async def generate_promotion_strategy(
 
     user_prompt = _build_user_prompt(
         store.name, top_products, categories, deals, holidays, slow_products, focus_deals,
+        occasion=(occasion or "").strip() or None,
+        instructions=(instructions or "").strip() or None,
     )
     ai_data = await generate_json_response(SYSTEM_PROMPT, user_prompt)
     _validate(ai_data)

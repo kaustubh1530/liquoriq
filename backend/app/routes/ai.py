@@ -34,6 +34,23 @@ from app.services.strategy_service import (
 router = APIRouter()
 
 
+@router.get(
+    "/holidays",
+    summary="Upcoming US drinking holidays (for the occasion picker)",
+)
+async def upcoming_holidays(
+    current_store: Annotated[Store, Depends(get_current_store)],
+    days: int = 60,
+) -> list[dict]:
+    from datetime import date
+
+    from app.services.holiday_calendar import get_upcoming_holidays
+    return [
+        {"key": h["key"], "name": h["name"], "days_away": h["days_away"]}
+        for h in get_upcoming_holidays(date.today(), days=days)
+    ]
+
+
 @router.post(
     "/generate-promotion",
     response_model=StrategyResponse,
@@ -56,6 +73,8 @@ async def generate_promotion(
             db=db,
             limit=body.limit,
             deal_ids=body.deal_ids,
+            occasion=body.occasion,
+            instructions=body.instructions,
         )
     except ValueError as e:
         raise HTTPException(

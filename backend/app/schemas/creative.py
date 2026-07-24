@@ -22,6 +22,10 @@ class GenerateCreativeRequest(BaseModel):
         default=None, max_length=200,
         description="Exact promo price/offer to render on the ad (defaults to the strategy's offer)",
     )
+    instructions: str | None = Field(
+        default=None, max_length=600,
+        description="Owner's art-direction hints: theme, event, layout, mood, changes to make",
+    )
 
 
 # ─── Phase 11: price overlay ──────────────────────────────────────────────────

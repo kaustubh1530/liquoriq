@@ -116,7 +116,11 @@ def _strip_internal_numbers(offer: str) -> str:
     return re.sub(r"\s{2,}", " ", result).strip(" -—,;") or offer.split("(")[0].strip()
 
 
-def _build_user_prompt(strategy: AIStrategyReport, offer_override: str | None = None) -> str:
+def _build_user_prompt(
+    strategy: AIStrategyReport,
+    offer_override: str | None = None,
+    instructions: str | None = None,
+) -> str:
     """Feed the full strategy context so the copy AND image are grounded in real data."""
     product_list = list(strategy.products_to_promote or [])
     hero = product_list[0] if product_list else "the promoted bottle"
@@ -125,6 +129,7 @@ def _build_user_prompt(strategy: AIStrategyReport, offer_override: str | None = 
     # Owner can override the exact promo price/offer that gets rendered on the ad.
     base_offer = offer_override.strip() if offer_override and offer_override.strip() else strategy.recommended_offer
     customer_offer = _strip_internal_numbers(base_offer)
+    owner_hint = (instructions or "").strip()
     return f"""Store: {strategy.store_name}
 
 Promotion strategy to turn into ad creative:
@@ -136,6 +141,9 @@ Promotion strategy to turn into ad creative:
   - Full offer for the COPY text (may mention value, never margin on the image): {strategy.recommended_offer}
   - Target customers: {strategy.target_customer_segment}
 
+{f'''OWNER'S ART-DIRECTION REQUESTS — follow these closely in the image_prompt
+(theme/event/layout/mood/changes): {owner_hint}
+''' if owner_hint else ''}
 Generate the complete ad creative package (all platforms + image_prompt).
 The image_prompt must produce a finished, festive, occasion-themed ad with "{hero}"
 as the single hero product, the headline, the CUSTOMER-FACING offer, and the store
@@ -173,10 +181,11 @@ async def generate_ad_creative(
     store_id: uuid.UUID,
     db: AsyncSession,
     offer_override: str | None = None,
+    instructions: str | None = None,
 ) -> AdCreative:
     """
     Full pipeline: strategy → GPT-4o copy → gpt-image-1 image → disk → DB.
-    offer_override lets the owner set the EXACT promo price rendered on the ad.
+    offer_override sets the EXACT promo price; instructions steer the art direction.
 
     Raises:
         ValueError   — strategy not found / bad AI response
@@ -199,7 +208,7 @@ async def generate_ad_creative(
     # 2. GPT-4o: platform copy + image prompt
     ai_data = await generate_json_response(
         SYSTEM_PROMPT,
-        _build_user_prompt(strategy, offer_override),
+        _build_user_prompt(strategy, offer_override, instructions),
     )
     _validate_creative(ai_data)
 

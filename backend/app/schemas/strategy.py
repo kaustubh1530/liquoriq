@@ -27,6 +27,14 @@ class GeneratePromotionRequest(BaseModel):
         default=None,
         description="Center the campaign on these deal buys (one, or several closeouts bundled together)",
     )
+    occasion: str | None = Field(
+        default=None, max_length=120,
+        description="Event/holiday to build around (e.g. 'Halloween', 'a wedding', 'store anniversary')",
+    )
+    instructions: str | None = Field(
+        default=None, max_length=600,
+        description="Free-text brief: new-release item to push, a specific offer/price, target audience, etc.",
+    )
 
 
 # ─── GET /ai/strategies  &  GET /ai/strategies/{id} ──────────────────────────
