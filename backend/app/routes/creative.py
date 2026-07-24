@@ -11,7 +11,7 @@ expect 15-30s response time (DALL-E is the slow part).
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
@@ -31,6 +31,51 @@ from app.services.creative_service import (
 )
 
 router = APIRouter()
+
+
+@router.post(
+    "/product-photo",
+    summary="Upload a real product photo (saved to the reusable library) (Phase 16)",
+)
+async def upload_product_photo(
+    current_store: Annotated[Store, Depends(get_current_store)],
+    file: UploadFile = File(..., description="A photo of the real bottle (JPG/PNG)"),
+    product_name: str | None = Form(default=None, description="Save it to the library for this product"),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.services.creative_service import _to_png
+    from app.services.product_photo_service import upsert_photo
+    from app.services.storage_service import save_image
+
+    raw = await file.read()
+    if not raw:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Empty file.")
+    try:
+        png = _to_png(raw)
+    except Exception:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            detail="Could not read that image. Use a JPG or PNG.")
+    url = await save_image(png, prefix="product")
+
+    # "Upload once, reuse forever" — remember it for this product
+    if product_name and product_name.strip():
+        await upsert_photo(current_store.id, product_name.strip(), url, db)
+
+    return {"product_image_url": url}
+
+
+@router.get(
+    "/product-photo",
+    summary="The saved library photo for a product, if any (Phase 16)",
+)
+async def get_product_photo(
+    product_name: str,
+    current_store: Annotated[Store, Depends(get_current_store)],
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.services.product_photo_service import get_photo_url
+    url = await get_photo_url(current_store.id, product_name, db)
+    return {"product_image_url": url}
 
 
 @router.post(
@@ -57,6 +102,7 @@ async def generate_creative(
             db=db,
             offer_override=body.offer_override,
             instructions=body.instructions,
+            product_image_url=body.product_image_url,
         )
     except ValueError as e:
         # Strategy not found → 404; bad AI output → 422

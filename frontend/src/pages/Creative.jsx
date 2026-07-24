@@ -11,7 +11,7 @@ import { useEffect, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { aiApi, creativeApi, assetUrl } from '../api/client'
 import Layout from '../components/Layout'
-import { Megaphone, Download, RefreshCw, Image as ImageIcon } from 'lucide-react'
+import { Megaphone, Download, RefreshCw, Image as ImageIcon, Upload, X } from 'lucide-react'
 
 function CopyBox({ label, text }) {
   const [copied, setCopied] = useState(false)
@@ -45,6 +45,8 @@ export default function Creative() {
   const [creative, setCreative] = useState(null)
   const [offer, setOffer] = useState('')          // exact promo price/offer to render
   const [instructions, setInstructions] = useState('')  // owner art-direction hints
+  const [productUrl, setProductUrl] = useState('')      // Phase 16: real bottle photo
+  const [uploading, setUploading] = useState(false)
   const [loading, setLoading] = useState(true)
   const [generating, setGenerating] = useState(false)
   const [error, setError] = useState('')
@@ -64,11 +66,15 @@ export default function Creative() {
     })()
   }, [preselected])
 
+  const selectedStrategy = strategies.find((s) => s.id === selectedId)
+  const heroProduct = selectedStrategy?.products_to_promote?.[0] ?? ''
+
   // When the selected strategy changes, fetch its latest creative (404 = none yet)
   useEffect(() => {
     if (!selectedId) return
     setCreative(null)
     setError('')
+    setProductUrl('')
     ;(async () => {
       try {
         const { data } = await creativeApi.get(selectedId)
@@ -79,11 +85,28 @@ export default function Creative() {
     })()
   }, [selectedId])
 
+  // Load the saved library photo for the hero product ("upload once, reuse forever")
+  useEffect(() => {
+    if (!heroProduct) { setProductUrl(''); return }
+    ;(async () => {
+      try {
+        const { data } = await creativeApi.getProductPhoto(heroProduct)
+        setProductUrl(data.product_image_url || '')
+      } catch {
+        setProductUrl('')
+      }
+    })()
+  }, [heroProduct])
+
   const handleGenerate = async () => {
     setError('')
     setGenerating(true)
     try {
-      const { data } = await creativeApi.generate(selectedId, offer.trim() || null, instructions.trim() || null)
+      const { data } = await creativeApi.generate(selectedId, {
+        offerOverride: offer.trim() || null,
+        instructions: instructions.trim() || null,
+        productImageUrl: productUrl || null,
+      })
       setCreative(data)
     } catch (err) {
       setError(err.response?.data?.detail ?? 'Failed to generate creative.')
@@ -92,7 +115,21 @@ export default function Creative() {
     }
   }
 
-  const selectedStrategy = strategies.find((s) => s.id === selectedId)
+  const handlePhoto = async (e) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setUploading(true)
+    setError('')
+    try {
+      // Attach to the hero product → saved to the library and reused forever
+      const { data } = await creativeApi.uploadProductPhoto(file, heroProduct || null)
+      setProductUrl(data.product_image_url)
+    } catch (err) {
+      setError(err.response?.data?.detail ?? 'Could not upload that photo.')
+    } finally {
+      setUploading(false)
+    }
+  }
 
   return (
     <Layout>
@@ -147,6 +184,32 @@ export default function Creative() {
                 />
                 <p className="text-[11px] text-gray-400 mt-1">
                   This exact price is rendered into the image. Change it and Regenerate to update the ad.
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">
+                  Real photo for <span className="font-medium text-gray-600">{heroProduct || 'the hero product'}</span>{' '}
+                  <span className="text-gray-300">(optional — accurate bottle & label)</span>
+                </label>
+                {productUrl ? (
+                  <div className="flex items-center gap-3">
+                    <img src={assetUrl(productUrl)} alt="Product" className="w-14 h-14 object-contain rounded-lg border border-gray-200 bg-gray-50" />
+                    <span className="text-xs text-green-600 font-medium">On file — reused automatically for this product ✓</span>
+                    <label className="text-xs text-brand-500 hover:underline cursor-pointer">
+                      Replace
+                      <input type="file" accept="image/*" onChange={handlePhoto} className="hidden" disabled={uploading} />
+                    </label>
+                  </div>
+                ) : (
+                  <label className="inline-flex items-center gap-2 text-sm text-brand-600 bg-brand-50 hover:bg-brand-100 px-4 py-2 rounded-xl cursor-pointer transition-colors">
+                    <Upload size={15} />
+                    {uploading ? 'Uploading…' : 'Upload bottle photo (once)'}
+                    <input type="file" accept="image/*" onChange={handlePhoto} className="hidden" disabled={uploading} />
+                  </label>
+                )}
+                <p className="text-[11px] text-gray-400 mt-1">
+                  Upload once per product — we save it and reuse it for every future ad of {heroProduct || 'this product'}. Use your own photo or a manufacturer image you're allowed to use.
                 </p>
               </div>
 

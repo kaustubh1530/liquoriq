@@ -147,6 +147,8 @@ export const analyticsApi = {
   slowProducts: (limit = 10) => api.get(`/analytics/slow-products?limit=${limit}`),
   categoryPerformance: () => api.get('/analytics/category-performance'),
   channelPerformance: () => api.get('/analytics/channel-performance'),
+  // Phase 17: inventory intelligence + action center
+  inventory: () => api.get('/analytics/inventory'),
 }
 
 // ── AI endpoints ──────────────────────────────────────────────────────────────
@@ -177,9 +179,26 @@ export const dealApi = {
 // ── Ad Creative endpoints ─────────────────────────────────────────────────────
 
 export const creativeApi = {
-  // gpt-image-1 + GPT-4o — slow call, 40-60s. offer + instructions steer the ad.
-  generate: (strategyId, offerOverride = null, instructions = null) =>
-    api.post('/creative/generate', { strategy_id: strategyId, offer_override: offerOverride, instructions }),
+  // gpt-image-1 + GPT-4o — slow call, 40-60s. offer + instructions + real photo steer the ad.
+  generate: (strategyId, { offerOverride = null, instructions = null, productImageUrl = null } = {}) =>
+    api.post('/creative/generate', {
+      strategy_id: strategyId,
+      offer_override: offerOverride,
+      instructions,
+      product_image_url: productImageUrl,
+    }),
+  // Phase 16: upload a real bottle photo; if productName given it's saved to the
+  // reusable library and auto-used for every future ad of that product.
+  uploadProductPhoto: (file, productName = null) => {
+    const form = new FormData()
+    form.append('file', file)
+    if (productName) form.append('product_name', productName)
+    return api.post('/creative/product-photo', form, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    })
+  },
+  // The saved library photo for a product (null if none on file)
+  getProductPhoto: (productName) => api.get('/creative/product-photo', { params: { product_name: productName } }),
   // Latest creative for a strategy — 404 if none generated yet
   get: (strategyId) => api.get(`/creative/${strategyId}`),
   // Phase 11: price prefill from the store's own sales data

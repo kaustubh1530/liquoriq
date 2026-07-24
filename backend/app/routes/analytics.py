@@ -29,12 +29,24 @@ from app.schemas.analytics import (
 from app.services.analytics_service import (
     get_category_performance,
     get_channel_performance,
+    get_inventory_intelligence,
     get_slow_products,
     get_summary,
     get_top_products,
 )
 
 router = APIRouter()
+
+
+@router.get(
+    "/inventory",
+    summary="Inventory Intelligence + Action Center (value, dead stock, reorder, overstock)",
+)
+async def analytics_inventory(
+    current_store: Annotated[Store, Depends(get_current_store)],
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    return await get_inventory_intelligence(current_store.id, db)
 
 
 @router.get(

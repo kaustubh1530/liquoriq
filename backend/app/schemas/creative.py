@@ -26,6 +26,10 @@ class GenerateCreativeRequest(BaseModel):
         default=None, max_length=600,
         description="Owner's art-direction hints: theme, event, layout, mood, changes to make",
     )
+    product_image_url: str | None = Field(
+        default=None,
+        description="Phase 16: a real product photo (from POST /creative/product-photo) to use as the accurate hero",
+    )
 
 
 # ─── Phase 11: price overlay ──────────────────────────────────────────────────

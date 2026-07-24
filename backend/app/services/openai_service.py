@@ -120,3 +120,43 @@ async def generate_image(prompt: str, size: str = "1024x1024") -> bytes:
         raise ValueError("DALL-E returned no image data")
 
     return base64.b64decode(b64_data)
+
+
+async def generate_image_edit(prompt: str, product_png: bytes, size: str = "1024x1024") -> bytes:
+    """
+    Phase 16 — compose a finished ad AROUND a REAL product photo using
+    gpt-image-1's edit endpoint. The input photo becomes the accurate hero
+    product (real label preserved), and the model builds the festive scene +
+    text around it. This is what makes bottles look real instead of AI-guessed.
+
+    product_png must be PNG bytes (caller converts). gpt-image-1 always returns
+    base64; no response_format param.
+
+    Raises RuntimeError on API errors, ValueError if no image returned.
+    """
+    from io import BytesIO
+
+    buf = BytesIO(product_png)
+    buf.name = "product.png"   # SDK needs a filename to infer the mime type
+
+    try:
+        response = await _client.images.edit(
+            model=settings.openai_image_model,   # gpt-image-1
+            image=buf,
+            prompt=prompt,
+            size=size,
+        )
+    except APIConnectionError as e:
+        logger.error("Image edit connection error: %s", e)
+        raise RuntimeError(f"Could not connect to OpenAI: {e}") from e
+    except RateLimitError as e:
+        logger.error("Image edit rate limit: %s", e)
+        raise RuntimeError("OpenAI rate limit reached. Try again in a moment.") from e
+    except APIStatusError as e:
+        logger.error("Image edit API error %s: %s", e.status_code, e.message)
+        raise RuntimeError(f"Image generation failed ({e.status_code}): {e.message}") from e
+
+    b64_data = response.data[0].b64_json if response.data else None
+    if not b64_data:
+        raise ValueError("Image edit returned no image data")
+    return base64.b64decode(b64_data)

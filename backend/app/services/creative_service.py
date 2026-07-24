@@ -34,8 +34,24 @@ from app.models.ai_strategy_report import AIStrategyReport
 from app.models.normalized_sale import NormalizedSale
 from app.models.store import Store
 from app.services.compose_service import render_final_ad
-from app.services.openai_service import generate_image, generate_json_response
+from app.services.openai_service import generate_image, generate_image_edit, generate_json_response
 from app.services.storage_service import fetch_image, save_image
+
+
+def _to_png(image_bytes: bytes, max_side: int = 1024) -> bytes:
+    """Normalize any uploaded photo to a square-ish PNG for the edit API."""
+    from io import BytesIO
+
+    from PIL import Image
+
+    img = Image.open(BytesIO(image_bytes)).convert("RGBA")
+    img.thumbnail((max_side, max_side))
+    # gpt-image-1 edit expects a square canvas; pad transparent to 1024x1024
+    canvas = Image.new("RGBA", (max_side, max_side), (0, 0, 0, 0))
+    canvas.paste(img, ((max_side - img.width) // 2, (max_side - img.height) // 2))
+    out = BytesIO()
+    canvas.save(out, format="PNG")
+    return out.getvalue()
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -182,10 +198,13 @@ async def generate_ad_creative(
     db: AsyncSession,
     offer_override: str | None = None,
     instructions: str | None = None,
+    product_image_url: str | None = None,
 ) -> AdCreative:
     """
     Full pipeline: strategy → GPT-4o copy → gpt-image-1 image → disk → DB.
     offer_override sets the EXACT promo price; instructions steer the art direction.
+    product_image_url (Phase 16): if given, the REAL product photo becomes the
+    accurate hero — the scene is composed around it via the image-edit endpoint.
 
     Raises:
         ValueError   — strategy not found / bad AI response
@@ -212,8 +231,25 @@ async def generate_ad_creative(
     )
     _validate_creative(ai_data)
 
-    # 3. DALL-E 3: generate the ad image (square 1024x1024 — works on every platform)
-    png_bytes = await generate_image(prompt=ai_data["image_prompt"])
+    # Auto-use the hero product's saved library photo ("upload once, reuse forever")
+    if not product_image_url:
+        from app.services.product_photo_service import get_photo_url
+        hero_name = (strategy.products_to_promote or [None])[0]
+        if hero_name:
+            product_image_url = await get_photo_url(store_id, str(hero_name), db)
+
+    # 3. Generate the ad image — real-photo edit path if a product photo is available
+    if product_image_url:
+        product_png = _to_png(await fetch_image(product_image_url))
+        edit_prompt = (
+            "Using the provided product photo as the EXACT hero bottle — preserve its "
+            "real label, shape, and colors, do NOT redraw or rename the label — build a "
+            "finished, festive, ready-to-post liquor-store ad around it. "
+            + ai_data["image_prompt"]
+        )
+        png_bytes = await generate_image_edit(prompt=edit_prompt, product_png=product_png)
+    else:
+        png_bytes = await generate_image(prompt=ai_data["image_prompt"])
 
     # 4. Persist image (local disk in dev, Cloudinary CDN in prod)
     image_url = await save_image(png_bytes, prefix="ad")

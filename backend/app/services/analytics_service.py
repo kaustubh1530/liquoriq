@@ -250,3 +250,111 @@ async def get_channel_performance(
         }
         for row in result.all()
     ]
+
+
+# ─── Inventory Intelligence + Action Center (Phase 17) ───────────────────────
+
+# Report period assumption + thresholds (tunable). AdvEntPOS summary reports are
+# ~monthly, so weekly velocity ≈ period units / 4.3.
+_PERIOD_WEEKS = 4.3
+_REORDER_WEEKS = 2.0        # < 2 weeks of stock left → reorder soon
+_OVERSTOCK_WEEKS = 16.0     # > ~4 months of stock → overstocked
+
+
+async def get_inventory_intelligence(store_id: uuid.UUID, db: AsyncSession) -> dict:
+    """
+    Turn stock_on_hand + sales velocity into money + actions.
+
+    Uses the LATEST snapshot per product (most recent sale_date) via Postgres
+    DISTINCT ON. Classifies each product: dead / reorder-soon / overstocked /
+    healthy, computes inventory value, and derives a ranked action list.
+    """
+    stmt = (
+        select(
+            NormalizedSale.product_name,
+            NormalizedSale.category,
+            NormalizedSale.quantity,
+            NormalizedSale.unit_price,
+            NormalizedSale.stock_on_hand,
+            NormalizedSale.sale_date,
+        )
+        .where(NormalizedSale.store_id == store_id)
+        .distinct(NormalizedSale.product_name)
+        .order_by(NormalizedSale.product_name, NormalizedSale.sale_date.desc().nulls_last())
+    )
+    rows = (await db.execute(stmt)).all()
+
+    inventory_value = 0.0
+    has_stock_data = False
+    products_in_stock = 0
+    dead, reorder, overstock = [], [], []
+
+    for r in rows:
+        stock = _safe_float(r.stock_on_hand)
+        price = _safe_float(r.unit_price)
+        units = _safe_float(r.quantity)   # units sold in the latest period
+        if r.stock_on_hand is not None:
+            has_stock_data = True
+        if stock <= 0:
+            continue
+        products_in_stock += 1
+
+        value = round(stock * price, 2)
+        inventory_value += value
+        weekly = units / _PERIOD_WEEKS
+        weeks_supply = (stock / weekly) if weekly > 0 else float("inf")
+
+        item = {
+            "product_name": r.product_name,
+            "category": r.category,
+            "stock": round(stock, 1),
+            "value": value,
+            "weeks_supply": (round(weeks_supply, 1) if weeks_supply != float("inf") else None),
+            "units_last_period": round(units, 1),
+        }
+        if units <= 0:
+            dead.append(item)
+        elif weeks_supply < _REORDER_WEEKS:
+            reorder.append(item)
+        elif weeks_supply > _OVERSTOCK_WEEKS:
+            overstock.append(item)
+
+    dead.sort(key=lambda x: x["value"], reverse=True)
+    reorder.sort(key=lambda x: (x["weeks_supply"] if x["weeks_supply"] is not None else 0))
+    overstock.sort(key=lambda x: x["value"], reverse=True)
+
+    dead_value = round(sum(i["value"] for i in dead), 2)
+    overstock_value = round(sum(i["value"] for i in overstock), 2)
+
+    # ── Derived action list ("do these today") ──
+    actions = []
+    if reorder:
+        actions.append({
+            "type": "reorder", "severity": "high",
+            "title": f"Reorder {len(reorder)} product{'s' if len(reorder) != 1 else ''} running low",
+            "detail": ", ".join(i["product_name"] for i in reorder[:3]),
+        })
+    if dead:
+        actions.append({
+            "type": "dead", "severity": "high",
+            "title": f"${dead_value:,.0f} frozen in {len(dead)} dead-stock product{'s' if len(dead) != 1 else ''}",
+            "detail": "Promote or discount to free up cash",
+            "cta": "Generate a clearance campaign", "link": "/ai",
+        })
+    if overstock:
+        actions.append({
+            "type": "overstock", "severity": "medium",
+            "title": f"{len(overstock)} product{'s' if len(overstock) != 1 else ''} overstocked",
+            "detail": ", ".join(i["product_name"] for i in overstock[:3]),
+            "cta": "Run a promotion", "link": "/ai",
+        })
+
+    return {
+        "has_stock_data": has_stock_data,
+        "inventory_value": round(inventory_value, 2),
+        "products_in_stock": products_in_stock,
+        "dead_stock": {"count": len(dead), "value": dead_value, "items": dead[:10]},
+        "reorder_soon": {"count": len(reorder), "items": reorder[:10]},
+        "overstocked": {"count": len(overstock), "value": overstock_value, "items": overstock[:10]},
+        "actions": actions,
+    }
