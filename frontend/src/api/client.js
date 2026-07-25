@@ -179,6 +179,19 @@ export const dealApi = {
   remove: (id) => api.delete(`/deals/${id}`),
 }
 
+// ── Customers + RFM segmentation (Phase 19) ───────────────────────────────────
+
+export const customerApi = {
+  upload: (file) => {
+    const form = new FormData()
+    form.append('file', file)
+    return api.post('/customers/upload', form, { headers: { 'Content-Type': 'multipart/form-data' } })
+  },
+  segments: () => api.get('/customers/segments'),
+  list: (segment = null, search = null) =>
+    api.get('/customers', { params: { segment: segment || undefined, search: search || undefined } }),
+}
+
 // ── Ad Creative endpoints ─────────────────────────────────────────────────────
 
 export const creativeApi = {

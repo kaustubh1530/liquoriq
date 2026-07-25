@@ -10,6 +10,7 @@ import {
   Sparkles,
   Megaphone,
   ArrowLeftRight,
+  Users,
   Store,
   LogOut,
 } from 'lucide-react'
@@ -21,6 +22,7 @@ const NAV = [
   { to: '/ai',         label: 'AI Strategy',  icon: Sparkles },
   { to: '/creative',   label: 'Ad Creative',  icon: Megaphone },
   { to: '/transfers',  label: 'Transfers',    icon: ArrowLeftRight },
+  { to: '/customers',  label: 'Customers',    icon: Users },
 ]
 
 export default function Layout({ children }) {

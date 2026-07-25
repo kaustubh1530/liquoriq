@@ -8,6 +8,7 @@ import Uploads from './pages/Uploads'
 import AIStrategy from './pages/AIStrategy'
 import Creative from './pages/Creative'
 import Transfers from './pages/Transfers'
+import Customers from './pages/Customers'
 
 export default function App() {
   return (
@@ -24,6 +25,7 @@ export default function App() {
           <Route path="/ai"        element={<ProtectedRoute><AIStrategy /></ProtectedRoute>} />
           <Route path="/creative"  element={<ProtectedRoute><Creative /></ProtectedRoute>} />
           <Route path="/transfers" element={<ProtectedRoute><Transfers /></ProtectedRoute>} />
+          <Route path="/customers" element={<ProtectedRoute><Customers /></ProtectedRoute>} />
 
           {/* Default */}
           <Route path="*" element={<Navigate to="/login" replace />} />

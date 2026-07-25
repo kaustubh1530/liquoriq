@@ -30,6 +30,7 @@ export default defineConfig({
       '/creative':  backend,
       '/transfers': backend,
       '/deals':     backend,
+      '/customers': backend,
       '/static':    backend,
       '/reports':   backend,
     },
