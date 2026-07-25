@@ -182,13 +182,14 @@ export const dealApi = {
 // ── Ad Creative endpoints ─────────────────────────────────────────────────────
 
 export const creativeApi = {
-  // gpt-image-1 + GPT-4o — slow call, 40-60s. offer + instructions + real photo steer the ad.
-  generate: (strategyId, { offerOverride = null, instructions = null, productImageUrl = null } = {}) =>
+  // gpt-image-1 + GPT-4o — slow call, 40-60s. offer + instructions + real photo + format.
+  generate: (strategyId, { offerOverride = null, instructions = null, productImageUrl = null, imageFormat = 'square' } = {}) =>
     api.post('/creative/generate', {
       strategy_id: strategyId,
       offer_override: offerOverride,
       instructions,
       product_image_url: productImageUrl,
+      image_format: imageFormat,
     }),
   // Phase 16: upload a real bottle photo; if productName given it's saved to the
   // reusable library and auto-used for every future ad of that product.

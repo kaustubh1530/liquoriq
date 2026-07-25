@@ -103,6 +103,7 @@ async def generate_creative(
             offer_override=body.offer_override,
             instructions=body.instructions,
             product_image_url=body.product_image_url,
+            image_format=body.image_format,
         )
     except ValueError as e:
         # Strategy not found → 404; bad AI output → 422

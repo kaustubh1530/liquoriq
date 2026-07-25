@@ -11,7 +11,7 @@ import { useEffect, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { aiApi, creativeApi, assetUrl } from '../api/client'
 import Layout from '../components/Layout'
-import { Megaphone, Download, RefreshCw, Image as ImageIcon, Upload, X } from 'lucide-react'
+import { Megaphone, Download, RefreshCw, Image as ImageIcon, Upload, ChevronDown, ChevronUp } from 'lucide-react'
 
 function CopyBox({ label, text }) {
   const [copied, setCopied] = useState(false)
@@ -46,6 +46,8 @@ export default function Creative() {
   const [offer, setOffer] = useState('')          // exact promo price/offer to render
   const [instructions, setInstructions] = useState('')  // owner art-direction hints
   const [productUrl, setProductUrl] = useState('')      // Phase 16: real bottle photo
+  const [format, setFormat] = useState('square')        // square | portrait | landscape
+  const [showMore, setShowMore] = useState(false)       // optional look-and-feel
   const [uploading, setUploading] = useState(false)
   const [loading, setLoading] = useState(true)
   const [generating, setGenerating] = useState(false)
@@ -106,6 +108,7 @@ export default function Creative() {
         offerOverride: offer.trim() || null,
         instructions: instructions.trim() || null,
         productImageUrl: productUrl || null,
+        imageFormat: format,
       })
       setCreative(data)
     } catch (err) {
@@ -156,80 +159,90 @@ export default function Creative() {
             </p>
           ) : (
             <div className="space-y-4">
-              <div>
-                <label className="block text-xs text-gray-500 mb-1">Strategy</label>
-                <select
-                  value={selectedId}
-                  onChange={(e) => setSelectedId(e.target.value)}
-                  className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
-                >
-                  {strategies.map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {s.strategy_title} · {new Date(s.created_at).toLocaleDateString()}
-                    </option>
+              {/* Strategy + price */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-gray-500 mb-1">Campaign</label>
+                  <select
+                    value={selectedId}
+                    onChange={(e) => setSelectedId(e.target.value)}
+                    className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
+                  >
+                    {strategies.map((s) => (
+                      <option key={s.id} value={s.id}>
+                        {s.strategy_title} · {new Date(s.created_at).toLocaleDateString()}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-500 mb-1">Price on the ad <span className="text-gray-300 font-normal">(optional)</span></label>
+                  <input
+                    type="text"
+                    value={offer}
+                    onChange={(e) => setOffer(e.target.value)}
+                    placeholder="$69.99 · 20% OFF · BOGO"
+                    className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
+                  />
+                </div>
+              </div>
+
+              {/* Format — compact segmented control + photo status on one line */}
+              <div className="flex items-center justify-between gap-4 flex-wrap">
+                <div className="inline-flex rounded-xl border border-gray-200 overflow-hidden text-xs font-semibold">
+                  {[
+                    { v: 'square', label: 'Square' },
+                    { v: 'portrait', label: 'Portrait' },
+                    { v: 'landscape', label: 'Landscape' },
+                  ].map((f) => (
+                    <button key={f.v} onClick={() => setFormat(f.v)}
+                      className={`px-3.5 py-1.5 transition-colors ${
+                        format === f.v ? 'bg-brand-500 text-white' : 'bg-white text-gray-500 hover:bg-gray-50'
+                      }`}>
+                      {f.label}
+                    </button>
                   ))}
-                </select>
-              </div>
+                </div>
 
-              <div>
-                <label className="block text-xs text-gray-500 mb-1">
-                  Promo price / offer to show on the ad <span className="text-gray-300">(optional — defaults to the strategy's offer)</span>
-                </label>
-                <input
-                  type="text"
-                  value={offer}
-                  onChange={(e) => setOffer(e.target.value)}
-                  placeholder="e.g. $69.99  ·  20% OFF  ·  Buy 2 get 1 free"
-                  className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
-                />
-                <p className="text-[11px] text-gray-400 mt-1">
-                  This exact price is rendered into the image. Change it and Regenerate to update the ad.
-                </p>
-              </div>
-
-              <div>
-                <label className="block text-xs text-gray-500 mb-1">
-                  Real photo for <span className="font-medium text-gray-600">{heroProduct || 'the hero product'}</span>{' '}
-                  <span className="text-gray-300">(optional — accurate bottle & label)</span>
-                </label>
+                {/* Real photo — compact */}
                 {productUrl ? (
-                  <div className="flex items-center gap-3">
-                    <img src={assetUrl(productUrl)} alt="Product" className="w-14 h-14 object-contain rounded-lg border border-gray-200 bg-gray-50" />
-                    <span className="text-xs text-green-600 font-medium">On file — reused automatically for this product ✓</span>
-                    <label className="text-xs text-brand-500 hover:underline cursor-pointer">
-                      Replace
-                      <input type="file" accept="image/*" onChange={handlePhoto} className="hidden" disabled={uploading} />
+                  <div className="flex items-center gap-2 text-xs">
+                    <img src={assetUrl(productUrl)} alt="" className="w-8 h-8 object-contain rounded-md border border-gray-200 bg-gray-50" />
+                    <span className="text-green-600 font-medium">Real photo on file</span>
+                    <label className="text-brand-500 hover:underline cursor-pointer">
+                      Replace<input type="file" accept="image/*" onChange={handlePhoto} className="hidden" disabled={uploading} />
                     </label>
                   </div>
                 ) : (
-                  <label className="inline-flex items-center gap-2 text-sm text-brand-600 bg-brand-50 hover:bg-brand-100 px-4 py-2 rounded-xl cursor-pointer transition-colors">
-                    <Upload size={15} />
-                    {uploading ? 'Uploading…' : 'Upload bottle photo (once)'}
+                  <label className="inline-flex items-center gap-1.5 text-xs font-medium text-brand-600 hover:text-brand-700 cursor-pointer">
+                    <Upload size={13} />
+                    {uploading ? 'Uploading…' : `Add real photo${heroProduct ? '' : ''}`}
                     <input type="file" accept="image/*" onChange={handlePhoto} className="hidden" disabled={uploading} />
                   </label>
                 )}
-                <p className="text-[11px] text-gray-400 mt-1">
-                  Upload once per product — we save it and reuse it for every future ad of {heroProduct || 'this product'}. Use your own photo or a manufacturer image you're allowed to use.
-                </p>
               </div>
 
+              {/* Optional look-and-feel — tucked away to keep it clean */}
               <div>
-                <label className="block text-xs text-gray-500 mb-1">
-                  How should the ad look? <span className="text-gray-300">(optional — theme, event, layout, mood, changes)</span>
-                </label>
-                <textarea
-                  value={instructions}
-                  onChange={(e) => setInstructions(e.target.value)}
-                  rows={2}
-                  placeholder="e.g. Make it a Christmas theme with snow and a fireplace. Bigger price tag. Warmer, gold tones. Show a festive cocktail beside the bottle."
-                  className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500 resize-none"
-                />
+                <button onClick={() => setShowMore(!showMore)}
+                  className="text-xs font-medium text-gray-400 hover:text-gray-600 flex items-center gap-1">
+                  {showMore ? <ChevronUp size={13} /> : <ChevronDown size={13} />} Look &amp; feel (optional)
+                </button>
+                {showMore && (
+                  <textarea
+                    value={instructions}
+                    onChange={(e) => setInstructions(e.target.value)}
+                    rows={2}
+                    placeholder="e.g. Christmas theme with snow & a fireplace. Bigger price tag. Cocktail beside the bottle."
+                    className="mt-2 w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500 resize-none"
+                  />
+                )}
               </div>
 
               <button
                 onClick={handleGenerate}
                 disabled={generating || !selectedId}
-                className="flex items-center gap-2 bg-brand-500 hover:bg-brand-600 text-white font-semibold px-5 py-2.5 rounded-xl text-sm transition-colors disabled:opacity-60"
+                className="w-full sm:w-auto flex items-center justify-center gap-2 bg-brand-500 hover:bg-brand-600 text-white font-semibold px-6 py-2.5 rounded-xl text-sm transition-colors disabled:opacity-60"
               >
                 {creative ? <RefreshCw size={16} /> : <ImageIcon size={16} />}
                 {generating ? 'Generating… (40-60s)' : creative ? 'Regenerate ad' : 'Generate ad'}
@@ -254,7 +267,7 @@ export default function Creative() {
               <img
                 src={assetUrl(creative.image_url)}
                 alt="Finished ad"
-                className="w-full aspect-square object-cover"
+                className="w-full max-h-[70vh] object-contain bg-gray-50"
               />
               <div className="flex items-center justify-between px-6 py-4">
                 <p className="text-xs text-gray-400">

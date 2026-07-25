@@ -95,6 +95,10 @@ Platform rules you always follow:
         (only the sale price or discount, e.g. "$89.99" or "20% OFF"), and the
         STORE NAME. Place each cleanly (headline on a top sign, offer on a
         chalkboard, store name on a bottom banner). Keep text short.
+      * KEEP ALL TEXT FULLY INSIDE THE FRAME with generous safe margins — at
+        least ~10% padding from every edge. The headline, price, and store name
+        must never touch or get cropped by the top, bottom, or side edges. Size
+        the text to fit comfortably within the canvas.
       * ABSOLUTELY NEVER render cost price, margin, profit, "margin", percentages
         of margin, or any internal/owner-only number. Those are confidential —
         the customer sees ONLY the sale price or discount.
@@ -220,6 +224,7 @@ async def generate_ad_creative(
     offer_override: str | None = None,
     instructions: str | None = None,
     product_image_url: str | None = None,
+    image_format: str = "square",
 ) -> AdCreative:
     """
     Full pipeline: strategy → GPT-4o copy → gpt-image-1 image → disk → DB.
@@ -259,6 +264,16 @@ async def generate_ad_creative(
         if hero_name:
             product_image_url = await get_photo_url(store_id, str(hero_name), db)
 
+    # Map the chosen format to a gpt-image-1 size.
+    #   square   1024x1024  → social posts
+    #   portrait 1024x1536  → printable poster / A4-ish flyer
+    #   landscape 1536x1024 → Facebook / banners
+    size = {
+        "square": "1024x1024",
+        "portrait": "1024x1536",
+        "landscape": "1536x1024",
+    }.get(image_format, "1024x1024")
+
     # 3. Generate the ad image — real-photo edit path if a product photo is available
     if product_image_url:
         product_png = _to_png(await fetch_image(product_image_url))
@@ -268,9 +283,9 @@ async def generate_ad_creative(
             "finished, festive, ready-to-post liquor-store ad around it. "
             + ai_data["image_prompt"]
         )
-        png_bytes = await generate_image_edit(prompt=edit_prompt, product_png=product_png)
+        png_bytes = await generate_image_edit(prompt=edit_prompt, product_png=product_png, size=size)
     else:
-        png_bytes = await generate_image(prompt=ai_data["image_prompt"])
+        png_bytes = await generate_image(prompt=ai_data["image_prompt"], size=size)
 
     # 4. Persist image (local disk in dev, Cloudinary CDN in prod)
     image_url = await save_image(png_bytes, prefix="ad")
