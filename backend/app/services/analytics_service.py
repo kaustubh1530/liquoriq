@@ -252,6 +252,34 @@ async def get_channel_performance(
     ]
 
 
+# ─── Sales trend over time (Phase 18) ────────────────────────────────────────
+
+async def get_sales_trend(store_id: uuid.UUID, db: AsyncSession) -> list[dict]:
+    """
+    Revenue + units per report period (grouped by sale_date), oldest first.
+    One point per uploaded report today; becomes a real trend as the owner
+    uploads WEEKLY reports.
+    """
+    result = await db.execute(
+        select(
+            NormalizedSale.sale_date.label("period"),
+            func.coalesce(func.sum(NormalizedSale.total_amount), 0).label("revenue"),
+            func.coalesce(func.sum(NormalizedSale.quantity), 0).label("units"),
+        )
+        .where(NormalizedSale.store_id == store_id, NormalizedSale.sale_date.isnot(None))
+        .group_by(NormalizedSale.sale_date)
+        .order_by(NormalizedSale.sale_date)
+    )
+    return [
+        {
+            "period": row.period.isoformat() if row.period else None,
+            "revenue": round(_safe_float(row.revenue), 2),
+            "units": round(_safe_float(row.units), 2),
+        }
+        for row in result.all()
+    ]
+
+
 # ─── Inventory Intelligence + Action Center (Phase 17) ───────────────────────
 
 # Report period assumption + thresholds (tunable). AdvEntPOS summary reports are

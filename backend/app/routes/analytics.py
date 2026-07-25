@@ -30,6 +30,7 @@ from app.services.analytics_service import (
     get_category_performance,
     get_channel_performance,
     get_inventory_intelligence,
+    get_sales_trend,
     get_slow_products,
     get_summary,
     get_top_products,
@@ -47,6 +48,45 @@ async def analytics_inventory(
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     return await get_inventory_intelligence(current_store.id, db)
+
+
+@router.get(
+    "/trend",
+    summary="Revenue & units per report period (sales trend over time)",
+)
+async def analytics_trend(
+    current_store: Annotated[Store, Depends(get_current_store)],
+    db: AsyncSession = Depends(get_db),
+) -> list[dict]:
+    return await get_sales_trend(current_store.id, db)
+
+
+@router.get(
+    "/campaign-summary",
+    summary="Latest campaign's measured ROI (for the dashboard)",
+)
+async def analytics_campaign_summary(
+    current_store: Annotated[Store, Depends(get_current_store)],
+    db: AsyncSession = Depends(get_db),
+) -> dict | None:
+    from app.services.campaign_service import get_campaign_performance
+    from app.services.strategy_service import get_all_strategies
+
+    strategies = await get_all_strategies(current_store.id, db)
+    if not strategies:
+        return None
+    newest = strategies[0]
+    perf = await get_campaign_performance(newest.id, current_store.id, db)
+    return {
+        "strategy_id": str(newest.id),
+        "strategy_title": newest.strategy_title,
+        "occasion": newest.occasion,
+        "status": perf["status"],
+        "days_elapsed": perf["days_elapsed"],
+        "campaign_window_days": perf["campaign_window_days"],
+        "total_units_lift_pct": perf["total_units_lift_pct"],
+        "total_revenue_lift": perf["total_revenue_lift"],
+    }
 
 
 @router.get(

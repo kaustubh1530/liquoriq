@@ -21,6 +21,7 @@ image ($0.04) ≈ $0.05 per generation.
 
 import json
 import logging
+import random
 import uuid
 
 from sqlalchemy import select
@@ -97,7 +98,14 @@ Platform rules you always follow:
       * ABSOLUTELY NEVER render cost price, margin, profit, "margin", percentages
         of margin, or any internal/owner-only number. Those are confidential —
         the customer sees ONLY the sale price or discount.
-      * Name a color palette and style ("warm, inviting, premium but approachable").
+      * CHOOSE a color palette and setting that specifically MATCH THE OCCASION —
+        do NOT default to warm amber/brown every time. Vary it boldly per event:
+        New Year's Eve = black + gold + confetti; Christmas = deep red + green +
+        snow; July 4th = red/white/blue; Cinco de Mayo = bright fiesta pinks/
+        turquoise/orange; Halloween = orange + purple + moody dark; Valentine's =
+        red + blush pink; St. Patrick's = rich greens; summer BBQ = bright airy
+        blues/greens with sunlight. Each ad should feel DISTINCT — pick a fresh
+        background, setting, and palette, not the same cozy amber scene.
     Adults 25+ only in any scene; classy, never excessive-drinking imagery.
 
 Alcohol advertising rules: never target minors, never encourage excessive
@@ -146,6 +154,17 @@ def _build_user_prompt(
     base_offer = offer_override.strip() if offer_override and offer_override.strip() else strategy.recommended_offer
     customer_offer = _strip_internal_numbers(base_offer)
     owner_hint = (instructions or "").strip()
+    # Nudge variety so repeated ads don't all look the same (gpt-image-1 tends to
+    # anchor on one look). Randomize composition/lighting/angle each render.
+    variety = random.choice([
+        "wide establishing shot with the product slightly off-center and lots of scene depth",
+        "tight top-down flat-lay style with props arranged around the bottle",
+        "dramatic low-angle hero shot with strong rim lighting and a dark backdrop",
+        "bright daylight lifestyle scene, airy and colorful, shallow depth of field",
+        "cozy evening scene with bokeh lights and rich saturated color",
+        "clean modern studio-meets-lifestyle look with a bold single accent color",
+        "outdoor golden-hour setting with natural warm light and greenery",
+    ])
     return f"""Store: {strategy.store_name}
 
 Promotion strategy to turn into ad creative:
@@ -164,6 +183,8 @@ Generate the complete ad creative package (all platforms + image_prompt).
 The image_prompt must produce a finished, festive, occasion-themed ad with "{hero}"
 as the single hero product, the headline, the CUSTOMER-FACING offer, and the store
 name "{strategy.store_name}" rendered in the image — like a professional social post.
+For visual VARIETY use this composition direction: {variety}. Match the palette and
+setting to the occasion (do not default to warm amber).
 NEVER put cost, margin, or profit numbers in the image. Use real product names in copy."""
 
 

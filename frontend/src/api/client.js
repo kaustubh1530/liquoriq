@@ -149,6 +149,9 @@ export const analyticsApi = {
   channelPerformance: () => api.get('/analytics/channel-performance'),
   // Phase 17: inventory intelligence + action center
   inventory: () => api.get('/analytics/inventory'),
+  // Phase 18: sales trend + latest campaign ROI
+  trend: () => api.get('/analytics/trend'),
+  campaignSummary: () => api.get('/analytics/campaign-summary'),
 }
 
 // ── AI endpoints ──────────────────────────────────────────────────────────────

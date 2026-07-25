@@ -8,12 +8,12 @@
 import { useEffect, useState } from 'react'
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
-  PieChart, Pie, Cell, Legend,
+  PieChart, Pie, Cell, Legend, AreaChart, Area, CartesianGrid,
 } from 'recharts'
 import { Link } from 'react-router-dom'
 import {
   DollarSign, ShoppingCart, Package, TrendingUp,
-  Boxes, AlertTriangle, RotateCw, Layers, ArrowRight, CheckCircle2,
+  Boxes, AlertTriangle, RotateCw, Layers, ArrowRight, CheckCircle2, Sparkles,
 } from 'lucide-react'
 import { analyticsApi } from '../api/client'
 import Layout from '../components/Layout'
@@ -32,6 +32,8 @@ export default function Dashboard() {
   const [topProds, setTopProds]   = useState([])
   const [categories, setCategories] = useState([])
   const [inv, setInv]             = useState(null)
+  const [trend, setTrend]         = useState([])
+  const [campaign, setCampaign]   = useState(null)
   const [loading, setLoading]     = useState(true)
   const [error, setError]         = useState('')
 
@@ -48,6 +50,9 @@ export default function Dashboard() {
         setTopProds(t.data)
         setCategories(c.data)
         setInv(i.data)
+        // Non-critical extras — don't fail the whole dashboard if they error
+        analyticsApi.trend().then((r) => setTrend(r.data)).catch(() => {})
+        analyticsApi.campaignSummary().then((r) => setCampaign(r.data)).catch(() => {})
       } catch (err) {
         setError('Failed to load analytics. Make sure you have uploaded and parsed a report.')
       } finally {
@@ -100,6 +105,38 @@ export default function Dashboard() {
                 icon={TrendingUp}
               />
             </div>
+
+            {/* ── Last campaign ROI (Phase 18) ── */}
+            {campaign && campaign.status !== 'no_baseline' && (campaign.total_units_lift_pct !== null || campaign.total_revenue_lift !== null) && (
+              <Link to="/ai" className="block mb-8">
+                <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5 flex items-center justify-between hover:border-brand-200 transition-colors">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className="w-10 h-10 rounded-xl bg-brand-50 flex items-center justify-center shrink-0">
+                      <Sparkles size={18} className="text-brand-500" />
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-xs text-gray-400 uppercase tracking-wide font-semibold">
+                        {campaign.status === 'complete' ? 'Last campaign' : `Campaign · day ${campaign.days_elapsed} of ${campaign.campaign_window_days}`}
+                      </p>
+                      <p className="text-sm font-semibold text-gray-800 truncate">{campaign.strategy_title}</p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-4 shrink-0">
+                    {campaign.total_units_lift_pct !== null && (
+                      <span className={`text-lg font-bold ${campaign.total_units_lift_pct >= 0 ? 'text-green-600' : 'text-red-500'}`}>
+                        {campaign.total_units_lift_pct > 0 ? '▲' : '▼'} {Math.abs(campaign.total_units_lift_pct)}% units
+                      </span>
+                    )}
+                    {campaign.total_revenue_lift !== null && (
+                      <span className={`text-lg font-bold ${campaign.total_revenue_lift >= 0 ? 'text-green-600' : 'text-red-500'}`}>
+                        {campaign.total_revenue_lift >= 0 ? '+' : '−'}${Math.abs(campaign.total_revenue_lift).toFixed(0)}
+                      </span>
+                    )}
+                    <ArrowRight size={16} className="text-gray-300" />
+                  </div>
+                </div>
+              </Link>
+            )}
 
             {/* ── Action Center + Inventory Intelligence (Phase 17) ── */}
             {inv?.has_stock_data && (
@@ -168,6 +205,33 @@ export default function Dashboard() {
                   items={inv.dead_stock.items} field={(x) => money0(x.value)} />
                 <InvList title="Overstocked" tone="blue" icon={Layers}
                   items={inv.overstocked.items} field={(x) => `${x.weeks_supply ?? '—'} wks`} />
+              </div>
+            )}
+
+            {/* ── Sales trend over time (Phase 18) ── */}
+            {trend.length > 0 && (
+              <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6 mb-6">
+                <div className="flex items-center justify-between mb-4">
+                  <h2 className="text-sm font-semibold text-gray-700">Revenue over time</h2>
+                  {trend.length === 1 && (
+                    <span className="text-[11px] text-gray-400">Upload weekly reports to see the trend build</span>
+                  )}
+                </div>
+                <ResponsiveContainer width="100%" height={240}>
+                  <AreaChart data={trend} margin={{ left: 8, right: 16, top: 8 }}>
+                    <defs>
+                      <linearGradient id="rev" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0%" stopColor="#e8a020" stopOpacity={0.35} />
+                        <stop offset="100%" stopColor="#e8a020" stopOpacity={0} />
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" vertical={false} />
+                    <XAxis dataKey="period" tick={{ fontSize: 11 }} tickFormatter={(v) => v?.slice(5)} />
+                    <YAxis tick={{ fontSize: 11 }} tickFormatter={(v) => v >= 1000 ? `$${(v / 1000).toFixed(0)}k` : `$${v}`} />
+                    <Tooltip formatter={(v, n) => [n === 'revenue' ? `$${Number(v).toLocaleString()}` : v, n === 'revenue' ? 'Revenue' : 'Units']} />
+                    <Area type="monotone" dataKey="revenue" stroke="#e8a020" strokeWidth={2} fill="url(#rev)" dot={{ r: 3, fill: '#e8a020' }} />
+                  </AreaChart>
+                </ResponsiveContainer>
               </div>
             )}
 
