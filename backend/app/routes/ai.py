@@ -75,6 +75,7 @@ async def generate_promotion(
             deal_ids=body.deal_ids,
             occasion=body.occasion,
             instructions=body.instructions,
+            target_segment=body.target_segment,
         )
     except ValueError as e:
         raise HTTPException(

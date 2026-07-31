@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.customer import Customer, CustomerPurchase
 from app.services import rfm
+from app.services.parsers.customer_parser import dedup_key
 
 
 async def ingest_customers(store_id: uuid.UUID, parsed: list[dict], db: AsyncSession) -> dict:
@@ -62,6 +63,41 @@ async def ingest_customers(store_id: uuid.UUID, parsed: list[dict], db: AsyncSes
     return {"created": created, "updated": updated, "total": created + updated}
 
 
+async def create_customer(store_id: uuid.UUID, data: dict, db: AsyncSession) -> dict:
+    """
+    Manually add (or update) a single customer. Uses the same idempotent
+    dedup-key upsert as file ingestion. Requires at least a name, email, or phone.
+    """
+    key = dedup_key(data.get("name"), data.get("email"), data.get("phone"))
+    if not key:
+        raise ValueError("Enter at least a name, email, or phone.")
+
+    last = data.get("last_purchase_date")
+    rec = {
+        "dedup_key": key,
+        "name": data.get("name"), "email": data.get("email"), "phone": data.get("phone"),
+        "total_spent": float(data.get("total_spent") or 0),
+        "purchase_count": int(data.get("purchase_count") or 0),
+        "last_purchase_date": last,
+        "first_purchase_date": data.get("first_purchase_date") or last,
+        "sms_opt_in": bool(data.get("sms_opt_in")),
+        "email_opt_in": bool(data.get("email_opt_in")),
+        "transactions": [],
+    }
+    await ingest_customers(store_id, [rec], db)
+
+    result = await db.execute(
+        select(Customer).where(Customer.store_id == store_id, Customer.dedup_key == key)
+    )
+    c = result.scalar_one()
+    d = _to_dict(c)
+    d.update(rfm.compute_rfm(d, date.today()))
+    d["id"] = str(d["id"])
+    d["last_purchase_date"] = d["last_purchase_date"].isoformat() if d["last_purchase_date"] else None
+    d["first_purchase_date"] = d["first_purchase_date"].isoformat() if d["first_purchase_date"] else None
+    return d
+
+
 def _to_dict(c: Customer) -> dict:
     return {
         "id": c.id, "name": c.name, "email": c.email, "phone": c.phone,
@@ -99,6 +135,91 @@ async def list_customers(
         d["id"] = str(d["id"])
         out.append(d)
     return out
+
+
+async def get_segment_audience(store_id: uuid.UUID, segment: str, db: AsyncSession) -> dict:
+    """
+    Aggregated stats for one RFM segment in this store (store-isolated).
+    Returns ONLY aggregates + warnings + the segment playbook — NO customer PII.
+    Raises ValueError if the segment name is invalid.
+    """
+    if segment not in rfm.SEGMENTS:
+        raise ValueError(f"Unknown segment '{segment}'. Valid: {', '.join(rfm.SEGMENTS)}")
+
+    rows = (await db.execute(
+        select(Customer).where(Customer.store_id == store_id)
+    )).scalars().all()
+    today = date.today()
+
+    matching = []
+    for c in rows:
+        d = _to_dict(c)
+        if rfm.compute_rfm(d, today)["segment"] == segment:
+            matching.append(d)
+
+    stats = rfm.segment_stats(matching)
+    return {
+        "segment": segment,
+        **stats,
+        "warnings": rfm.audience_warnings(stats),
+        "recommendation": rfm.SEGMENT_RECOMMENDATIONS[segment],
+        "playbook": rfm.SEGMENT_PLAYBOOK[segment],
+    }
+
+
+async def get_recipients(
+    store_id: uuid.UUID, channel: str, db: AsyncSession, segment: str | None = None,
+) -> list[dict]:
+    """
+    Customers eligible to receive a `channel` message: consented (opt_in),
+    NOT suppressed (opted_out), with a usable address, in `segment` if given.
+    Returns [{customer_id, to}]. Store-isolated.
+    """
+    query = select(Customer).where(Customer.store_id == store_id)
+    if channel == "sms":
+        query = query.where(
+            Customer.sms_opt_in.is_(True), Customer.sms_opted_out.is_(False),
+            Customer.phone.isnot(None),
+        )
+    elif channel == "email":
+        query = query.where(
+            Customer.email_opt_in.is_(True), Customer.email_opted_out.is_(False),
+            Customer.email.isnot(None),
+        )
+    else:
+        raise ValueError("channel must be 'sms' or 'email'")
+
+    rows = (await db.execute(query)).scalars().all()
+    today = date.today()
+    out = []
+    for c in rows:
+        if segment:
+            d = _to_dict(c)
+            if rfm.compute_rfm(d, today)["segment"] != segment:
+                continue
+        addr = c.phone if channel == "sms" else c.email
+        if addr and addr.strip():
+            out.append({"customer_id": c.id, "to": addr.strip()})
+    return out
+
+
+async def opt_out(store_id: uuid.UUID, customer_id: uuid.UUID, channel: str, db: AsyncSession) -> None:
+    """Suppress a customer from a channel (survives re-uploads)."""
+    result = await db.execute(
+        select(Customer).where(Customer.id == customer_id, Customer.store_id == store_id)
+    )
+    c = result.scalar_one_or_none()
+    if c is None:
+        raise ValueError("Customer not found.")
+    if channel == "sms":
+        c.sms_opted_out = True
+        c.sms_opt_in = False
+    elif channel == "email":
+        c.email_opted_out = True
+        c.email_opt_in = False
+    else:
+        raise ValueError("channel must be 'sms' or 'email'")
+    await db.commit()
 
 
 async def segment_summary(store_id: uuid.UUID, db: AsyncSession) -> dict:

@@ -19,8 +19,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.models.store import Store
 from app.routes.stores import get_current_store
-from app.schemas.customer import CustomerListItem, SegmentSummary, UploadResult
-from app.services.customer_service import ingest_customers, list_customers, segment_summary
+from app.schemas.customer import CustomerCreate, CustomerListItem, SegmentSummary, UploadResult
+from app.services.customer_service import (
+    create_customer,
+    get_segment_audience,
+    ingest_customers,
+    list_customers,
+    segment_summary,
+)
 from app.services.parsers.customer_parser import parse_customers
 
 router = APIRouter()
@@ -57,6 +63,23 @@ async def upload_customers(
     return await ingest_customers(current_store.id, parsed, db)
 
 
+@router.post(
+    "",
+    response_model=CustomerListItem,
+    status_code=status.HTTP_201_CREATED,
+    summary="Manually add (or update) a single customer",
+)
+async def create_one_customer(
+    body: CustomerCreate,
+    current_store: Annotated[Store, Depends(get_current_store)],
+    db: AsyncSession = Depends(get_db),
+) -> CustomerListItem:
+    try:
+        return await create_customer(current_store.id, body.model_dump(), db)
+    except ValueError as e:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(e))
+
+
 @router.get(
     "/segments",
     response_model=SegmentSummary,
@@ -67,6 +90,21 @@ async def customer_segments(
     db: AsyncSession = Depends(get_db),
 ) -> SegmentSummary:
     return await segment_summary(current_store.id, db)
+
+
+@router.get(
+    "/audience/{segment}",
+    summary="Aggregated audience stats for a segment (for strategy targeting; no PII)",
+)
+async def customer_audience(
+    segment: str,
+    current_store: Annotated[Store, Depends(get_current_store)],
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    try:
+        return await get_segment_audience(current_store.id, segment, db)
+    except ValueError as e:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail=str(e))
 
 
 @router.get(

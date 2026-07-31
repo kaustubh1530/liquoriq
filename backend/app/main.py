@@ -80,7 +80,7 @@ app.mount(
 )
 
 # ─── Routers ─────────────────────────────────────────────────────────────────
-from app.routes import auth, stores, uploads, analytics, ai, creative, transfers, deals, customers, reports  # noqa: E402
+from app.routes import auth, stores, uploads, analytics, ai, creative, transfers, deals, customers, campaigns, reports  # noqa: E402
 
 app.include_router(auth.router,      prefix="/auth",      tags=["Auth"])
 app.include_router(stores.router,    prefix="/stores",    tags=["Stores"])
@@ -91,6 +91,7 @@ app.include_router(creative.router,  prefix="/creative",  tags=["Creative"])
 app.include_router(transfers.router, prefix="/transfers", tags=["Transfers"])
 app.include_router(deals.router,     prefix="/deals",     tags=["Deals"])
 app.include_router(customers.router, prefix="/customers", tags=["Customers"])
+app.include_router(campaigns.router, prefix="/campaigns", tags=["Campaigns"])
 app.include_router(reports.router,   prefix="/reports",   tags=["Reports"])
 
 

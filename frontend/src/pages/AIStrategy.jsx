@@ -4,9 +4,83 @@
 
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { aiApi, dealApi } from '../api/client'
+import { aiApi, dealApi, customerApi, campaignApi } from '../api/client'
 import Layout from '../components/Layout'
-import { Sparkles, ChevronDown, ChevronUp, Megaphone, TrendingUp, TrendingDown, Tag, Trash2 } from 'lucide-react'
+import { Sparkles, ChevronDown, ChevronUp, Megaphone, TrendingUp, TrendingDown, Tag, Trash2, Users, AlertTriangle, Send, MessageSquare, Mail } from 'lucide-react'
+
+// ── Send campaign (Phase 21): preview → confirm → send, to opted-in customers ──
+function SendCampaign({ strategyId }) {
+  const [channel, setChannel] = useState(null)   // 'sms' | 'email' | null
+  const [preview, setPreview] = useState(null)
+  const [result, setResult] = useState(null)
+  const [busy, setBusy] = useState(false)
+
+  const openChannel = async (ch) => {
+    setChannel(ch); setResult(null); setPreview(null); setBusy(true)
+    try { setPreview((await campaignApi.preview(strategyId, ch)).data) }
+    catch (e) { setPreview({ error: e.response?.data?.detail ?? 'Preview failed' }) }
+    finally { setBusy(false) }
+  }
+
+  const send = async () => {
+    const live = preview?.live
+    const msg = live
+      ? `Send this ${channel.toUpperCase()} to ${preview.recipient_count} opted-in customers now? This sends real messages.`
+      : `Run a DRY RUN for ${preview.recipient_count} recipients? (Twilio not configured — nothing is actually sent.)`
+    if (!window.confirm(msg)) return
+    setBusy(true)
+    try { setResult((await campaignApi.send(strategyId, channel)).data) }
+    catch (e) { setResult({ error: e.response?.data?.detail ?? 'Send failed' }) }
+    finally { setBusy(false) }
+  }
+
+  return (
+    <div className="border-t border-gray-100 pt-4">
+      <div className="flex items-center gap-2 mb-2">
+        <Send size={14} className="text-brand-500" />
+        <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Send to customers</span>
+      </div>
+      <div className="flex gap-2 mb-2">
+        <button onClick={() => openChannel('sms')}
+          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border ${channel === 'sms' ? 'bg-brand-500 text-white border-brand-500' : 'bg-white text-gray-600 border-gray-200'}`}>
+          <MessageSquare size={12} /> SMS
+        </button>
+        <button onClick={() => openChannel('email')}
+          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border ${channel === 'email' ? 'bg-brand-500 text-white border-brand-500' : 'bg-white text-gray-600 border-gray-200'}`}>
+          <Mail size={12} /> Email
+        </button>
+      </div>
+
+      {busy && !result && <p className="text-xs text-gray-400">Working…</p>}
+
+      {preview && !result && !preview.error && (
+        <div className="bg-gray-50 rounded-xl p-3">
+          <p className="text-sm text-gray-700">
+            <b>{preview.recipient_count}</b> opted-in {channel} recipient{preview.recipient_count !== 1 ? 's' : ''}
+            {preview.target_segment && <> in <b>{preview.target_segment}</b></>}
+          </p>
+          {preview.warnings?.map((w, i) => (
+            <p key={i} className="flex items-center gap-1.5 text-[11px] text-amber-600 mt-1"><AlertTriangle size={11} /> {w}</p>
+          ))}
+          <p className="text-[11px] text-gray-400 mt-2 whitespace-pre-wrap bg-white rounded-lg p-2 border border-gray-100">{preview.sample_message}</p>
+          <button onClick={send} disabled={busy || preview.recipient_count === 0}
+            className="mt-2 bg-brand-500 hover:bg-brand-600 text-white font-semibold px-4 py-1.5 rounded-lg text-xs disabled:opacity-60">
+            {preview.live ? `Send to ${preview.recipient_count}` : `Dry run (${preview.recipient_count})`}
+          </button>
+        </div>
+      )}
+      {preview?.error && <p className="text-xs text-red-500">{preview.error}</p>}
+
+      {result && !result.error && (
+        <div className="bg-green-50 rounded-xl p-3 text-sm text-green-700">
+          {result.status === 'dry_run' ? 'Dry run complete' : 'Campaign sent'} — {result.sent_count} {result.status === 'dry_run' ? 'simulated' : 'sent'}
+          {result.failed_count > 0 && `, ${result.failed_count} failed`}.
+        </div>
+      )}
+      {result?.error && <p className="text-xs text-red-500">{result.error}</p>}
+    </div>
+  )
+}
 
 // ── Phase 12: campaign ROI section (lazy-loaded when a card is expanded) ──────
 function CampaignPerformance({ strategyId }) {
@@ -127,6 +201,11 @@ function StrategyCard({ s: listItem, defaultOpen = false }) {
                 : 'bg-gray-100 text-gray-600'
               }`}>{s.occasion}</span>
             )}
+            {s.target_segment && (
+              <span className="text-[10px] font-bold uppercase tracking-wide px-2 py-0.5 rounded-full bg-blue-100 text-blue-700">
+                🎯 {s.target_segment}
+              </span>
+            )}
             <p className="font-semibold text-gray-900">{s.strategy_title}</p>
           </div>
           <p className="text-xs text-gray-400 mt-0.5">
@@ -201,8 +280,20 @@ function StrategyCard({ s: listItem, defaultOpen = false }) {
             <Megaphone size={15} />
             Create ad creative →
           </Link>
+
+          {/* Phase 21 — send this campaign to opted-in customers */}
+          <SendCampaign strategyId={s.id} />
         </div>
       )}
+    </div>
+  )
+}
+
+function Stat({ label, value }) {
+  return (
+    <div>
+      <p className="text-sm font-bold text-gray-800">{value}</p>
+      <p className="text-[10px] text-gray-400 uppercase tracking-wide">{label}</p>
     </div>
   )
 }
@@ -326,6 +417,10 @@ export default function AIStrategy() {
   const [focus, setFocus] = useState('auto')     // 'auto' | 'all' | deal id
   const [occasion, setOccasion] = useState('')   // '' = auto; holiday name; or custom
   const [brief, setBrief] = useState('')         // free-text instructions
+  const [segments, setSegments] = useState([])   // segment summary buckets
+  const [targetSegment, setTargetSegment] = useState('')  // '' = all customers
+  const [audience, setAudience] = useState(null) // aggregate preview for selected segment
+  const [audienceLoading, setAudienceLoading] = useState(false)
 
   const load = async () => {
     try {
@@ -333,12 +428,23 @@ export default function AIStrategy() {
       setStrategies(s.data)
       setDeals(d.data)
       setHolidays(h.data)
+      customerApi.segments().then((r) => setSegments(r.data.segments || [])).catch(() => {})
     } catch {
       // ignore
     } finally {
       setLoading(false)
     }
   }
+
+  // Load the aggregate audience preview when a target segment is chosen
+  useEffect(() => {
+    if (!targetSegment) { setAudience(null); return }
+    setAudienceLoading(true)
+    customerApi.audience(targetSegment)
+      .then((r) => setAudience(r.data))
+      .catch(() => setAudience(null))
+      .finally(() => setAudienceLoading(false))
+  }, [targetSegment])
   const loadDeals = async () => { try { setDeals((await dealApi.list()).data) } catch { /* noop */ } }
 
   useEffect(() => { load() }, [])
@@ -355,6 +461,7 @@ export default function AIStrategy() {
         dealIds,
         occasion: occasion.trim() || null,
         instructions: brief.trim() || null,
+        targetSegment: targetSegment || null,
       })
       await load()
     } catch (err) {
@@ -412,6 +519,58 @@ export default function AIStrategy() {
                 </datalist>
               </div>
             </div>
+
+            {/* Phase 20: target a customer segment */}
+            {segments.length > 0 && (
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">
+                  Target audience <span className="text-gray-300">(optional — a customer segment)</span>
+                </label>
+                <select
+                  value={targetSegment}
+                  onChange={(e) => setTargetSegment(e.target.value)}
+                  className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
+                >
+                  <option value="">All customers (no specific segment)</option>
+                  {segments.filter((s) => s.count > 0).map((s) => (
+                    <option key={s.segment} value={s.segment}>{s.segment} · {s.count} customers</option>
+                  ))}
+                </select>
+
+                {/* Audience preview */}
+                {targetSegment && (
+                  audienceLoading ? (
+                    <p className="text-xs text-gray-400 mt-2">Loading audience…</p>
+                  ) : audience ? (
+                    <div className="mt-2 p-3 rounded-xl bg-gray-50 border border-gray-100">
+                      <div className="flex items-center gap-2 mb-2">
+                        <Users size={14} className="text-brand-500" />
+                        <span className="text-xs font-semibold text-gray-700">{audience.segment} audience</span>
+                      </div>
+                      <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 text-center">
+                        <Stat label="Customers" value={audience.size} />
+                        <Stat label="Avg spend" value={`$${Math.round(audience.avg_spend)}`} />
+                        <Stat label="Avg visits" value={audience.avg_visits} />
+                        <Stat label="SMS ✓" value={audience.sms_opted_in} />
+                        <Stat label="Email ✓" value={audience.email_opted_in} />
+                      </div>
+                      {audience.warnings?.length > 0 && (
+                        <div className="mt-2 space-y-1">
+                          {audience.warnings.map((w, i) => (
+                            <p key={i} className="flex items-center gap-1.5 text-[11px] text-amber-600">
+                              <AlertTriangle size={11} /> {w}
+                            </p>
+                          ))}
+                        </div>
+                      )}
+                      <p className="text-[10px] text-gray-400 mt-2">
+                        Only these aggregate numbers are sent to the AI — never customer names, emails, or phone numbers.
+                      </p>
+                    </div>
+                  ) : null
+                )}
+              </div>
+            )}
 
             <div>
               <label className="block text-xs text-gray-500 mb-1">

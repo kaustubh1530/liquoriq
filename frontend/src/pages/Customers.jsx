@@ -10,7 +10,7 @@
 import { useEffect, useState } from 'react'
 import { customerApi } from '../api/client'
 import Layout from '../components/Layout'
-import { Users, Upload, Search, MessageSquare, Mail } from 'lucide-react'
+import { Users, Upload, Search, MessageSquare, Mail, UserPlus, X } from 'lucide-react'
 
 const money = (n) => `$${Number(n || 0).toLocaleString('en-US', { maximumFractionDigits: 0 })}`
 
@@ -41,6 +41,15 @@ export default function Customers() {
   const [uploading, setUploading] = useState(false)
   const [error, setError] = useState('')
 
+  // Manual add-customer form
+  const [showAdd, setShowAdd] = useState(false)
+  const [form, setForm] = useState({
+    name: '', email: '', phone: '', total_spent: '', purchase_count: '',
+    last_purchase_date: '', sms_opt_in: false, email_opt_in: false,
+  })
+  const [saving, setSaving] = useState(false)
+  const [addError, setAddError] = useState('')
+
   const loadSummary = async () => {
     try { setSummary((await customerApi.segments()).data) } catch { /* empty */ }
   }
@@ -52,6 +61,27 @@ export default function Customers() {
   useEffect(() => { loadRows() }, [segment])
 
   const onSearch = (e) => { e.preventDefault(); loadRows() }
+
+  const addCustomer = async () => {
+    setAddError(''); setSaving(true)
+    try {
+      await customerApi.create({
+        name: form.name.trim() || null,
+        email: form.email.trim() || null,
+        phone: form.phone.trim() || null,
+        total_spent: form.total_spent ? Number(form.total_spent) : 0,
+        purchase_count: form.purchase_count ? Number(form.purchase_count) : 0,
+        last_purchase_date: form.last_purchase_date || null,
+        sms_opt_in: form.sms_opt_in,
+        email_opt_in: form.email_opt_in,
+      })
+      setForm({ name: '', email: '', phone: '', total_spent: '', purchase_count: '', last_purchase_date: '', sms_opt_in: false, email_opt_in: false })
+      setShowAdd(false)
+      await Promise.all([loadSummary(), loadRows()])
+    } catch (err) {
+      setAddError(err.response?.data?.detail?.[0]?.msg ?? err.response?.data?.detail ?? 'Could not add customer.')
+    } finally { setSaving(false) }
+  }
 
   const onUpload = async (e) => {
     const file = e.target.files?.[0]
@@ -70,17 +100,71 @@ export default function Customers() {
   return (
     <Layout>
       <div className="max-w-5xl mx-auto">
-        <div className="flex items-center justify-between mb-1">
+        <div className="flex items-center justify-between mb-1 gap-2 flex-wrap">
           <h1 className="text-2xl font-bold text-gray-900">Customers</h1>
-          <label className="inline-flex items-center gap-2 text-sm font-semibold text-brand-600 bg-brand-50 hover:bg-brand-100 px-4 py-2 rounded-xl cursor-pointer transition-colors">
-            <Upload size={15} />
-            {uploading ? 'Importing…' : 'Import customer report'}
-            <input type="file" accept=".csv,.xlsx,.xls" onChange={onUpload} className="hidden" disabled={uploading} />
-          </label>
+          <div className="flex items-center gap-2">
+            <button onClick={() => { setShowAdd(!showAdd); setAddError('') }}
+              className="inline-flex items-center gap-2 text-sm font-semibold text-gray-700 bg-white border border-gray-200 hover:border-brand-300 px-4 py-2 rounded-xl transition-colors">
+              {showAdd ? <X size={15} /> : <UserPlus size={15} />} {showAdd ? 'Cancel' : 'Add customer'}
+            </button>
+            <label className="inline-flex items-center gap-2 text-sm font-semibold text-brand-600 bg-brand-50 hover:bg-brand-100 px-4 py-2 rounded-xl cursor-pointer transition-colors">
+              <Upload size={15} />
+              {uploading ? 'Importing…' : 'Import report'}
+              <input type="file" accept=".csv,.xlsx,.xls" onChange={onUpload} className="hidden" disabled={uploading} />
+            </label>
+          </div>
         </div>
         <p className="text-sm text-gray-500 mb-6">
           Segmented by RFM — recency, frequency, and spend — with a marketing move for each group
         </p>
+
+        {/* Manual add-customer form */}
+        {showAdd && (
+          <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5 mb-6">
+            <h2 className="text-sm font-semibold text-gray-700 mb-3">Add a customer</h2>
+            {addError && <p className="text-xs text-red-500 mb-3">{addError}</p>}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-3">
+              <input placeholder="Name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })}
+                className="border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500" />
+              <input placeholder="Email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })}
+                className="border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500" />
+              <input placeholder="Phone" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })}
+                className="border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500" />
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-3">
+              <div>
+                <label className="block text-[11px] text-gray-400 mb-1">Total spent ($)</label>
+                <input type="number" min="0" step="0.01" value={form.total_spent} onChange={(e) => setForm({ ...form, total_spent: e.target.value })}
+                  className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500" />
+              </div>
+              <div>
+                <label className="block text-[11px] text-gray-400 mb-1">Visits</label>
+                <input type="number" min="0" value={form.purchase_count} onChange={(e) => setForm({ ...form, purchase_count: e.target.value })}
+                  className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500" />
+              </div>
+              <div>
+                <label className="block text-[11px] text-gray-400 mb-1">Last purchase</label>
+                <input type="date" value={form.last_purchase_date} onChange={(e) => setForm({ ...form, last_purchase_date: e.target.value })}
+                  className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500" />
+              </div>
+            </div>
+            <div className="flex items-center justify-between flex-wrap gap-3">
+              <div className="flex items-center gap-4 text-xs text-gray-600">
+                <label className="flex items-center gap-1.5 cursor-pointer">
+                  <input type="checkbox" checked={form.sms_opt_in} onChange={(e) => setForm({ ...form, sms_opt_in: e.target.checked })} /> SMS opt-in
+                </label>
+                <label className="flex items-center gap-1.5 cursor-pointer">
+                  <input type="checkbox" checked={form.email_opt_in} onChange={(e) => setForm({ ...form, email_opt_in: e.target.checked })} /> Email opt-in
+                </label>
+              </div>
+              <button onClick={addCustomer} disabled={saving || (!form.name.trim() && !form.email.trim() && !form.phone.trim())}
+                className="bg-brand-500 hover:bg-brand-600 text-white font-semibold px-5 py-2 rounded-xl text-sm disabled:opacity-60">
+                {saving ? 'Saving…' : 'Save customer'}
+              </button>
+            </div>
+            <p className="text-[11px] text-gray-400 mt-2">Enter at least a name, email, or phone. Consent is stored for future campaigns — no messages are sent.</p>
+          </div>
+        )}
 
         {error && <div className="mb-4 p-3 rounded-xl bg-red-50 text-red-600 text-sm">{error}</div>}
 

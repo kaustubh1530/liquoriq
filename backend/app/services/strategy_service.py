@@ -118,6 +118,7 @@ def _build_user_prompt(
     focus_deals: list[DealBuy],
     occasion: str | None = None,
     instructions: str | None = None,
+    audience: dict | None = None,
 ) -> str:
     parts = [f"Store: {store_name}", ""]
 
@@ -176,6 +177,21 @@ def _build_user_prompt(
             parts.append(f"  - {p['product_name']}: ${p['total_revenue']} revenue")
         parts.append("")
 
+    if audience:
+        pb = audience.get("playbook", {})
+        parts += [
+            "", f"TARGET AUDIENCE — this campaign is aimed at the '{audience['segment']}' customer segment.",
+            f"  Who they are: {pb.get('behavior', '')}",
+            f"  Marketing objective: {pb.get('objective', '')}",
+            f"  Recommended tone: {pb.get('tone', '')}",
+            # AGGREGATES ONLY — never any customer names/emails/phones (privacy).
+            f"  Audience size: {audience['size']} customers · avg spend ${audience['avg_spend']} · "
+            f"avg visits {audience['avg_visits']} · {audience['sms_opted_in']} SMS-opted-in · "
+            f"{audience['email_opted_in']} email-opted-in.",
+            "  Tailor the offer, SMS, email, and social copy to THIS audience and objective. "
+            "State a clear campaign objective in the reason/expected_impact.", "",
+        ]
+
     if instructions:
         parts += ["", "OWNER INSTRUCTIONS — follow these closely (they override defaults):",
                   f"  {instructions}", ""]
@@ -197,6 +213,7 @@ async def generate_promotion_strategy(
     deal_ids: list[uuid.UUID] | None = None,
     occasion: str | None = None,
     instructions: str | None = None,
+    target_segment: str | None = None,
 ) -> AIStrategyReport:
     """
     Assemble rich context (top sellers, categories, deals, holidays, slow movers)
@@ -227,13 +244,29 @@ async def generate_promotion_strategy(
             "or wait for an upcoming event."
         )
 
-    logger.info("Strategy 2.0 for store=%s (focus_deals=%d, %d holidays, %d deals)",
-                store_id, len(focus_deals), len(holidays), len(deals))
+    # ── Segment targeting (Phase 20) — aggregates only, no PII to GPT ──────────
+    audience = None
+    target_segment = (target_segment or "").strip() or None
+    if target_segment:
+        from app.services.customer_service import get_segment_audience
+        try:
+            audience = await get_segment_audience(store_id, target_segment, db)
+        except ValueError as e:
+            raise ValueError(str(e))
+        if audience["size"] == 0:
+            raise ValueError(
+                f"The '{target_segment}' segment has no customers to target. "
+                "Import a customer report or pick another segment."
+            )
+
+    logger.info("Strategy 2.0 for store=%s (focus_deals=%d, %d holidays, %d deals, segment=%s)",
+                store_id, len(focus_deals), len(holidays), len(deals), target_segment)
 
     user_prompt = _build_user_prompt(
         store.name, top_products, categories, deals, holidays, slow_products, focus_deals,
         occasion=(occasion or "").strip() or None,
         instructions=(instructions or "").strip() or None,
+        audience=audience,
     )
     ai_data = await generate_json_response(SYSTEM_PROMPT, user_prompt)
     _validate(ai_data)
@@ -257,6 +290,12 @@ async def generate_promotion_strategy(
         offline_plan=ai_data["offline_plan"],
         online_plan=ai_data["online_plan"],
         vivino_listing=ai_data.get("vivino_listing") or None,
+        # Phase 20: freeze WHO this was aimed at + the audience stats at generation
+        # time, so ROI stays stable even when customers later change RFM segment.
+        target_segment=target_segment,
+        audience_snapshot=(
+            {k: v for k, v in audience.items() if k != "playbook"} if audience else None
+        ),
         model_used=str(ai_data.get("model_used", "gpt-4o")),
     )
     db.add(report)

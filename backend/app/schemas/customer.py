@@ -1,6 +1,26 @@
 """schemas/customer.py — Customer + RFM shapes (Phase 19)"""
 
-from pydantic import BaseModel
+from datetime import date
+
+from pydantic import BaseModel, Field, model_validator
+
+
+class CustomerCreate(BaseModel):
+    """Manually add a customer. At least one identity field is required."""
+    name: str | None = Field(default=None, max_length=255)
+    email: str | None = Field(default=None, max_length=255)
+    phone: str | None = Field(default=None, max_length=50)
+    total_spent: float = Field(default=0, ge=0, lt=10_000_000)
+    purchase_count: int = Field(default=0, ge=0, lt=1_000_000)
+    last_purchase_date: date | None = None
+    sms_opt_in: bool = False
+    email_opt_in: bool = False
+
+    @model_validator(mode="after")
+    def _need_identity(self):
+        if not (self.name or self.email or self.phone):
+            raise ValueError("Enter at least a name, email, or phone.")
+        return self
 
 
 class UploadResult(BaseModel):

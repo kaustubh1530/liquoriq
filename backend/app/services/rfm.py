@@ -37,6 +37,80 @@ SEGMENT_RECOMMENDATIONS = {
 }
 
 
+# ── Segment playbook (Phase 20): behavior + objective + tone for AI targeting ──
+SEGMENT_PLAYBOOK = {
+    "VIP": {
+        "behavior": "Your best customers — buy often, spend the most, came in recently.",
+        "objective": "Deepen loyalty and reward them; make them feel recognized.",
+        "tone": "Warm, exclusive, appreciative — VIP treatment.",
+    },
+    "High Value": {
+        "behavior": "Big spenders on premium products; strong but not the most frequent.",
+        "objective": "Upsell premium and bundles; increase visit frequency.",
+        "tone": "Premium, aspirational, knowledgeable.",
+    },
+    "Loyal": {
+        "behavior": "Come in frequently; dependable regulars.",
+        "objective": "Reward frequency, encourage referrals and larger baskets.",
+        "tone": "Friendly, community, thank-you.",
+    },
+    "New": {
+        "behavior": "Recent first purchases; not yet a habit.",
+        "objective": "Convert to a second purchase and build the habit.",
+        "tone": "Welcoming, helpful, low-pressure.",
+    },
+    "At Risk": {
+        "behavior": "Were valuable but haven't been in for a while — slipping away.",
+        "objective": "Win them back before they're lost.",
+        "tone": "Sincere 'we miss you', with a compelling reason to return.",
+    },
+    "Inactive": {
+        "behavior": "Haven't purchased in a long time.",
+        "objective": "Reactivate with a strong offer, or accept churn.",
+        "tone": "Bold, attention-grabbing, generous.",
+    },
+    "Regular": {
+        "behavior": "Steady mid-tier customers.",
+        "objective": "Nudge them up a tier with a bundle or small incentive.",
+        "tone": "Approachable, value-forward.",
+    },
+}
+
+# Warn below this many customers — a campaign to a tiny audience is low-value.
+SMALL_AUDIENCE = 10
+
+
+def segment_stats(customers_in_segment: list[dict]) -> dict:
+    """
+    AGGREGATE stats for a set of customers (already filtered to one segment).
+    Returns ONLY aggregates — never any name/email/phone (privacy for GPT).
+    """
+    size = len(customers_in_segment)
+    total_spent = round(sum(float(c.get("total_spent") or 0) for c in customers_in_segment), 2)
+    total_visits = sum(int(c.get("purchase_count") or 0) for c in customers_in_segment)
+    return {
+        "size": size,
+        "total_spent": total_spent,
+        "avg_spend": round(total_spent / size, 2) if size else 0.0,
+        "avg_visits": round(total_visits / size, 1) if size else 0.0,
+        "sms_opted_in": sum(1 for c in customers_in_segment if c.get("sms_opt_in")),
+        "email_opted_in": sum(1 for c in customers_in_segment if c.get("email_opt_in")),
+    }
+
+
+def audience_warnings(stats: dict) -> list[str]:
+    """Deterministic warnings for a target audience."""
+    warnings = []
+    if stats["size"] == 0:
+        warnings.append("This segment is empty — no customers to target.")
+        return warnings
+    if stats["sms_opted_in"] == 0 and stats["email_opted_in"] == 0:
+        warnings.append("No customers in this segment have opted in to SMS or email.")
+    if 0 < stats["size"] < SMALL_AUDIENCE:
+        warnings.append(f"Small audience ({stats['size']} customers) — impact will be limited.")
+    return warnings
+
+
 def _score(value, table) -> int:
     for threshold, score in table:
         if value >= threshold:

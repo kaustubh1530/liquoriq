@@ -10,3 +10,4 @@ from app.models.transfer import Transfer, TransferItem, TransferPartner, Settlem
 from app.models.deal_buy import DealBuy  # noqa: F401
 from app.models.product_photo import ProductPhoto  # noqa: F401
 from app.models.customer import Customer, CustomerPurchase  # noqa: F401
+from app.models.campaign import Campaign, MessageLog  # noqa: F401

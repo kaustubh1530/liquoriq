@@ -53,6 +53,10 @@ class Customer(Base):
     # ── Marketing consent (prepared for Twilio/email — NOT sending yet) ────────
     sms_opt_in: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     email_opt_in: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    # Suppression list (Phase 21): once opted OUT, never messaged again — survives
+    # re-uploads (ingestion never clears these). Compliance requirement.
+    sms_opted_out: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    email_opted_out: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False,

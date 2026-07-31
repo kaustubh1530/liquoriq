@@ -68,3 +68,4 @@ Pillow==10.4.0
 cloudinary==1.44.1
 xlrd==2.0.1
 pytest==8.2.2
+twilio==9.2.3

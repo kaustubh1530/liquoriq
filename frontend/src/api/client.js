@@ -163,6 +163,7 @@ export const aiApi = {
     deal_ids: opts.dealIds ?? null,
     occasion: opts.occasion ?? null,
     instructions: opts.instructions ?? null,
+    target_segment: opts.targetSegment ?? null,
   }),
   list: () => api.get('/ai/strategies'),
   get: (id) => api.get(`/ai/strategies/${id}`),
@@ -179,6 +180,14 @@ export const dealApi = {
   remove: (id) => api.delete(`/deals/${id}`),
 }
 
+// ── Campaign distribution (Phase 21) ──────────────────────────────────────────
+
+export const campaignApi = {
+  preview: (strategyId, channel) => api.get('/campaigns/preview', { params: { strategy_id: strategyId, channel } }),
+  send: (strategyId, channel) => api.post('/campaigns/send', { strategy_id: strategyId, channel }),
+  history: () => api.get('/campaigns'),
+}
+
 // ── Customers + RFM segmentation (Phase 19) ───────────────────────────────────
 
 export const customerApi = {
@@ -190,6 +199,9 @@ export const customerApi = {
   segments: () => api.get('/customers/segments'),
   list: (segment = null, search = null) =>
     api.get('/customers', { params: { segment: segment || undefined, search: search || undefined } }),
+  create: (data) => api.post('/customers', data),
+  // Phase 20: aggregated audience stats for a segment (no PII)
+  audience: (segment) => api.get(`/customers/audience/${encodeURIComponent(segment)}`),
 }
 
 // ── Ad Creative endpoints ─────────────────────────────────────────────────────

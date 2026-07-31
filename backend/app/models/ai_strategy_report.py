@@ -72,6 +72,13 @@ class AIStrategyReport(Base):
     vivino_listing: Mapped[str | None] = mapped_column(
         Text, nullable=True, comment="Vivino / online-ready product listing copy")
 
+    # ── Segment targeting (Phase 20): who this campaign is aimed at ───────────
+    target_segment: Mapped[str | None] = mapped_column(
+        String(30), nullable=True, comment="RFM segment targeted (VIP, At Risk, …); null = all")
+    audience_snapshot: Mapped[dict | None] = mapped_column(
+        JSON, nullable=True,
+        comment="Aggregated segment stats AT GENERATION TIME (no PII) — frozen so ROI is stable")
+
     # ── Meta ──────────────────────────────────────────────────────────────────
     model_used: Mapped[str] = mapped_column(String(50), nullable=False, default="gpt-4o")
     created_at: Mapped[datetime] = mapped_column(

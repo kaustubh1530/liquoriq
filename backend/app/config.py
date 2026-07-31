@@ -59,6 +59,11 @@ class Settings(BaseSettings):
     baseline_window_days: int = 28   # sales history BEFORE strategy creation = baseline
     campaign_window_days: int = 14   # measurement window AFTER strategy creation
 
+    # ── SMS distribution (Phase 21). Empty = dry-run (nothing sent). ──────────
+    twilio_account_sid: str = ""
+    twilio_auth_token: str = ""
+    twilio_from_number: str = ""
+
     # ── File Uploads ──────────────────────────────────────────────────────────
     upload_dir: str = "uploads"
     max_upload_size_mb: int = 20

@@ -35,6 +35,10 @@ class GeneratePromotionRequest(BaseModel):
         default=None, max_length=600,
         description="Free-text brief: new-release item to push, a specific offer/price, target audience, etc.",
     )
+    target_segment: str | None = Field(
+        default=None, max_length=30,
+        description="RFM customer segment to target (VIP, Loyal, New, At Risk, Inactive, High Value, Regular)",
+    )
 
 
 # ─── GET /ai/strategies  &  GET /ai/strategies/{id} ──────────────────────────
@@ -70,6 +74,10 @@ class StrategyResponse(BaseModel):
     online_plan: str | None = None
     vivino_listing: str | None = None
 
+    # Segment targeting (Phase 20) — null on older strategies (backward compatible)
+    target_segment: str | None = None
+    audience_snapshot: Any | None = None
+
     # Meta
     model_used: str
     created_at: datetime
@@ -89,6 +97,7 @@ class StrategyListItem(BaseModel):
     recommended_offer: str
     occasion: str | None = None
     strategy_type: str | None = None
+    target_segment: str | None = None
     model_used: str
     created_at: datetime
 
