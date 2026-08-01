@@ -34,6 +34,7 @@ export default defineConfig({
       '/campaigns': backend,
       '/static':    backend,
       '/reports':   backend,
+      '/label-studio': backend,
     },
   },
 })

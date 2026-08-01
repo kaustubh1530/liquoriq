@@ -1,11 +1,14 @@
 """
-routes/creative.py — Ad Creative endpoints (Phase 10)
+routes/creative.py — MODULE 1: AI AD CREATOR endpoints
 
-POST /creative/generate        — Generate image + platform copy for a strategy
-GET  /creative/{strategy_id}   — Latest creative package for that strategy
+POST /creative/generate        — Generate a FINISHED ad + platform copy
+GET  /creative/{strategy_id}   — Latest ad for that strategy
+GET/POST /creative/product-facts — Reusable owner-confirmed product facts
 
-Both require JWT auth. Generation calls GPT-4o AND DALL-E 3 —
-expect 15-30s response time (DALL-E is the slow part).
+All require JWT auth. Generation calls GPT-4o AND gpt-image-1 — expect 40-60s.
+
+Label/badge endpoints deliberately DO NOT live here: they belong to
+routes/label_studio.py (MODULE 2). This module's job ends at a finished ad.
 """
 
 import uuid
@@ -22,6 +25,7 @@ from app.schemas.creative import (
     CreativeResponse,
     GenerateCreativeRequest,
     PriceSuggestion,
+    ProductFactsIn,
 )
 from app.services.creative_service import (
     compose_final_creative,
@@ -31,6 +35,27 @@ from app.services.creative_service import (
 )
 
 router = APIRouter()
+
+
+@router.get("/product-facts", summary="Saved facts for a product (Professional Ad Upgrade)")
+async def get_product_facts(
+    product_name: str,
+    current_store: Annotated[Store, Depends(get_current_store)],
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.services.product_facts_service import get_facts
+    return {"product_name": product_name, "facts": await get_facts(current_store.id, product_name, db) or {}}
+
+
+@router.post("/product-facts", summary="Save/confirm reusable product facts")
+async def save_product_facts(
+    body: ProductFactsIn,
+    current_store: Annotated[Store, Depends(get_current_store)],
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.services.product_facts_service import upsert_facts
+    row = await upsert_facts(current_store.id, body.product_name, body.category, body.facts, db)
+    return {"product_name": row.product_name, "category": row.category, "facts": row.facts}
 
 
 @router.post(
@@ -104,6 +129,10 @@ async def generate_creative(
             instructions=body.instructions,
             product_image_url=body.product_image_url,
             image_format=body.image_format,
+            product_facts=body.product_facts,
+            campaign_type=body.campaign_type,
+            show_product_details=body.show_product_details,
+            ad_layout=body.ad_layout,
         )
     except ValueError as e:
         # Strategy not found → 404; bad AI output → 422

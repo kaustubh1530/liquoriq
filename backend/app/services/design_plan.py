@@ -1,0 +1,282 @@
+"""
+services/design_plan.py — MODULE 1: AI AD CREATOR (design plan + validation)
+
+RESPONSIBILITY: turn a campaign strategy into a validated art-direction plan for
+ONE professional advertisement. Nothing else. This module knows nothing about
+labels, badges, or the Label Studio.
+
+Instead of asking GPT for a freehand image prompt, we ask for a STRUCTURED design
+plan (headline, subheadline, palette, composition, …). We then VALIDATE it
+deterministically — length caps, forbidden internal-number scrub, no unsupported
+factual claims — and COMPOSE the gpt-image-1 prompt from the validated plan.
+
+WHAT THE AI RENDERS: background, product, lighting, composition. NO TEXT.
+WHAT THE SERVER RENDERS: headline, exact price, store name (+ optionally a few
+product details) — stamped with Pillow in ad_text_renderer.py so every character
+is crisp, correctly spelled, and never cropped.
+WHAT THE AI MUST NEVER RENDER: badges, stickers, ribbons, deal labels, discount
+cards, coupons. Those belong to the Label Studio (module 2).
+
+Pure functions (no DB / no network) → fully unit-tested.
+"""
+
+import re
+
+# ── Limits (tunable) ──────────────────────────────────────────────────────────
+HEADLINE_MAX = 34   # rendered by Pillow now, so it can be a little longer
+SUBHEADLINE_MAX = 60
+OFFER_MAX = 24
+DETAIL_MAX_ITEMS = 3
+DETAIL_ITEM_MAX = 40
+
+INTERNAL = re.compile(r"\b(margin|markup|profit|cost|wholesale|COGS)\b", re.I)
+
+HEX_RE = re.compile(r"^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$")
+
+# The strategy's recommended_offer is a SENTENCE written for a human
+# ("Lamarca Prosecco 750ml for $21.99 this weekend"). The ad needs the DEAL
+# ITSELF, big. Pulling the token out is what stops the price slot from being
+# filled with the product name all over again.
+PRICE_TOKEN_RE = re.compile(
+    r"(?P<money>\$\s?\d[\d,]*(?:\.\d{1,2})?)"
+    r"|(?P<forprice>\b\d+\s*for\s*\$?\s?\d[\d,]*(?:\.\d{1,2})?)"
+    r"|(?P<pct>\b\d{1,3}\s?%\s*off\b)"
+    r"|(?P<bogo>\bBOGO\b|\bbuy\s*\d+\s*get\s*\d+(?:\s*free)?\b)",
+    re.I,
+)
+DEFAULT_ACCENT = "#c1121f"
+
+# Layouts the text renderer can typeset. "auto" lets the format decide.
+AD_LAYOUTS = {"auto", "rail", "band", "banner"}
+
+# Campaign types that justify showing customer-facing product details on the ad.
+# Any other campaign stays CLEAN AND MINIMAL unless the owner explicitly opts in.
+DETAIL_CAMPAIGN_TYPES = {
+    "new_arrival", "product_spotlight", "premium_collection", "limited_edition",
+}
+
+CAMPAIGN_TYPES = {"standard", *DETAIL_CAMPAIGN_TYPES}
+
+# Claim words that assert a verifiable product FACT. If the fact isn't confirmed
+# in product_facts, the block mentioning it is dropped (no hallucinated proof /
+# age / awards / origin / ingredients).
+CLAIM_PATTERNS = {
+    "proof":      re.compile(r"\b(\d+\s*proof|proof)\b", re.I),
+    "abv":        re.compile(r"\b\d+(\.\d+)?\s*%?\s*(abv|alc)\b", re.I),
+    "age":        re.compile(r"\b(\d+\s*(year|yr)s?\s*(old|aged)?|aged\s+\d+)\b", re.I),
+    "award":      re.compile(r"\b(award|gold medal|double gold|best in|winner|rated \d+)\b", re.I),
+    "origin":     re.compile(r"\b(from|made in|produced in|distilled in|hecho en)\b", re.I),
+    "distilled":  re.compile(r"\b(\d+\s*times?\s*distilled|distilled\s*\d+\s*times?)\b", re.I),
+    "ingredient": re.compile(r"\b(agave|blue agave|corn|rye|wheat|barley|grape|molasses)\b", re.I),
+}
+
+
+def show_product_details(campaign_type: str | None, owner_enabled: bool) -> bool:
+    """
+    Product details appear ONLY when the owner explicitly enables them, or when
+    the campaign is one where facts genuinely sell the bottle (new arrival,
+    spotlight, premium collection, limited edition). Otherwise: clean + minimal.
+    """
+    if owner_enabled:
+        return True
+    return (campaign_type or "standard").strip().lower() in DETAIL_CAMPAIGN_TYPES
+
+
+def _scrub(text: str) -> str:
+    """Remove any clause containing internal/owner-only terms."""
+    if not text:
+        return ""
+    clauses = re.split(r"[()\[\]—;]|,(?=\s)", text)
+    kept = [c.strip() for c in clauses if c.strip() and not INTERNAL.search(c)]
+    return re.sub(r"\s{2,}", " ", ", ".join(kept)).strip(" -—,;")
+
+
+def _cap(text: str, n: int) -> str:
+    text = (text or "").strip()
+    if len(text) <= n:
+        return text
+    return text[: n - 1].rstrip() + "…"
+
+
+def extract_price(offer: str) -> str:
+    """
+    Pull the deal itself out of an offer sentence: "$21.99", "20% OFF", "BOGO",
+    "2 for $30". Returns "" when the sentence contains no actual deal, in which
+    case the caller falls back to showing a short offer phrase instead.
+    """
+    match = PRICE_TOKEN_RE.search(offer or "")
+    if not match:
+        return ""
+    token = match.group(0).strip()
+    token = re.sub(r"\s+", " ", token)
+    token = re.sub(r"\$\s+", "$", token)
+    return token.upper() if not token.startswith("$") else token
+
+
+def is_amount(token: str) -> bool:
+    """True for a plain money amount — those read naturally after the word 'AT'."""
+    return bool(token) and token.startswith("$")
+
+
+def _accent(raw) -> str:
+    """
+    The AI picks an accent colour to match the scene it art-directed, so the
+    typography belongs to THAT ad instead of every ad sharing one red. Anything
+    that isn't a clean hex is rejected — this value is drawn, not eval'd, but a
+    junk colour would crash Pillow.
+    """
+    value = str(raw or "").strip()
+    if HEX_RE.match(value):
+        if len(value) == 4:   # #abc → #aabbcc
+            value = "#" + "".join(c * 2 for c in value[1:])
+        return value.lower()
+    return DEFAULT_ACCENT
+
+
+def _facts_text(product_facts: dict | None) -> str:
+    """Flatten confirmed facts to a lowercase blob to check claims against."""
+    if not product_facts:
+        return ""
+    return " ".join(str(v) for v in product_facts.values() if v).lower()
+
+
+def _claim_supported(text: str, facts_blob: str) -> bool:
+    """A block asserting a fact is allowed ONLY if that fact appears in confirmed facts."""
+    for pattern in CLAIM_PATTERNS.values():
+        if pattern.search(text):
+            if not facts_blob:
+                return False
+            tokens = [t for t in re.findall(r"[a-z0-9%]+", text.lower()) if len(t) > 2]
+            if not any(t in facts_blob for t in tokens):
+                return False
+    return True
+
+
+def validate_design_plan(
+    plan: dict,
+    hero_product: str,
+    customer_offer: str,
+    product_facts: dict | None = None,
+    campaign_type: str | None = None,
+    owner_wants_details: bool = False,
+) -> dict:
+    """
+    Deterministically clean an AI design plan:
+      - scrub internal numbers (margin/cost/profit/markup/wholesale) from EVERY field
+      - enforce length caps on headline / subheadline / details
+      - product details: only when gated ON; then ≤3, deduped, no hero-name repeat,
+        and any unsupported factual claim is dropped
+      - force the customer-facing offer (we control the exact price string)
+    Returns a clean plan dict. Never raises.
+
+    NOTE: badge_texts from the AI are DISCARDED on purpose — badges/stickers/
+    ribbons are the Label Studio's job, not the ad generator's.
+    """
+    facts_blob = _facts_text(product_facts)
+    out: dict = {}
+
+    out["headline"] = _cap(_scrub(plan.get("headline", "")), HEADLINE_MAX)
+    out["subheadline"] = _cap(_scrub(plan.get("subheadline", "")), SUBHEADLINE_MAX)
+    if out["subheadline"] and not _claim_supported(out["subheadline"], facts_blob):
+        out["subheadline"] = ""
+
+    # Offer text is OWNER-controlled and already scrubbed upstream — trust it,
+    # but pull out the actual DEAL so the price slot shows "$21.99" rather than
+    # a truncated restatement of the product name.
+    offer = (customer_offer or "").strip()
+    out["offer_text"] = extract_price(offer) or _cap(offer, OFFER_MAX)
+    out["offer_is_amount"] = is_amount(out["offer_text"])
+
+    # Product details — gated. When off, the ad stays clean and minimal.
+    details: list[str] = []
+    if show_product_details(campaign_type, owner_wants_details):
+        seen = set()
+        for raw in (plan.get("product_details") or plan.get("supporting_blocks") or []):
+            b = _cap(_scrub(str(raw)), DETAIL_ITEM_MAX)
+            key = b.lower()
+            if not b or key in seen:
+                continue
+            if hero_product and hero_product.lower() in key:
+                continue  # don't repeat the product name
+            if not _claim_supported(b, facts_blob):
+                continue
+            seen.add(key)
+            details.append(b)
+            if len(details) >= DETAIL_MAX_ITEMS:
+                break
+    out["product_details"] = details
+
+    # Art-direction fields (free text, scrubbed)
+    for f in ["visual_theme", "palette", "typography_style", "product_placement",
+              "background", "lighting", "composition"]:
+        out[f] = _scrub(plan.get(f, ""))[:200]
+
+    out["accent_color"] = _accent(plan.get("accent_color"))
+    out["eyebrow"] = _cap(_scrub(plan.get("eyebrow", "")), 24).upper()
+    out["hero_product"] = hero_product
+    out["campaign_type"] = (campaign_type or "standard").strip().lower()
+    return out
+
+
+def compose_image_prompt(plan: dict, store_name: str = "") -> str:
+    """
+    Build the gpt-image-1 prompt from a VALIDATED plan.
+
+    The AI renders ONLY: attractive background, correct product, premium lighting,
+    professional composition. NO text of any kind, and explicitly NO badges,
+    stickers, ribbons, price tags, or coupon graphics — the server stamps the
+    headline/price/store name, and the Label Studio owns every badge.
+
+    store_name is accepted (and deliberately unused in the prompt) so callers keep
+    a stable signature; the store name is rendered by Pillow, never by the model.
+    """
+    hero = plan.get("hero_product") or "the promoted bottle"
+    parts = [
+        "Design the BACKGROUND ARTWORK for a premium liquor-store advertisement — "
+        "the quality of a paid agency campaign photograph.",
+        f"HERO PRODUCT: {hero} — the single clear focal point, sharply lit, placed "
+        "on the RIGHT side of the frame with generous breathing room. Do NOT add "
+        "other or unrelated liquor brands, and no clutter of random bottles.",
+        f"VISUAL THEME: {plan.get('visual_theme','')}.",
+        f"BACKGROUND: {plan.get('background','')} — make it RICH, ATTRACTIVE and "
+        "ATMOSPHERIC: a beautifully styled, immersive themed scene with real depth, "
+        "texture, tasteful props, and mood. Eye-catching and premium — just slightly "
+        "softer/blurred behind the product so the bottle stays the hero. "
+        "NOT a plain or empty background.",
+        f"LIGHTING: {plan.get('lighting','')} — cinematic, dimensional lighting with "
+        "highlights and shadows for a polished, high-end look.",
+        f"COMPOSITION: {plan.get('composition','')}. Strong visual hierarchy, one "
+        "clear focal point, rich but never cluttered. Keep the LEFT THIRD of the "
+        "frame visually calm and uncluttered (darker or softly blurred) — a caption "
+        "will be placed there afterwards.",
+        f"COLOR PALETTE: {plan.get('palette','')} — a bold, cohesive palette matched "
+        "to the theme.",
+        "ABSOLUTELY NO TEXT: render no words, letters, numbers, prices, headlines, "
+        "logos, or store names anywhere in the image.",
+        "ABSOLUTELY NO GRAPHIC OVERLAYS: no badges, stickers, ribbons, banners, "
+        "seals, starbursts, price tags, discount cards, coupons, or sale labels. "
+        "Just the photographic scene and the product.",
+        "Adults 25+ only; classy; never depict excessive drinking.",
+    ]
+    return "\n".join(p for p in parts if p)
+
+
+def ad_text_spec(plan: dict, store_name: str) -> dict:
+    """
+    The deterministic text the SERVER will stamp onto the AI scene.
+
+    This is the hand-off between "the AI made a picture" and "we made an ad".
+    Every string here is owner-controlled or validated — never model-generated
+    pixels, so the price is always exactly what the owner typed.
+    """
+    return {
+        "eyebrow": plan.get("eyebrow", ""),
+        "headline": plan.get("headline", ""),
+        "subheadline": plan.get("subheadline", ""),
+        "price": plan.get("offer_text", ""),
+        "price_is_amount": bool(plan.get("offer_is_amount")),
+        "product": plan.get("hero_product", ""),
+        "store_name": store_name,
+        "details": list(plan.get("product_details") or []),
+        "accent": plan.get("accent_color", DEFAULT_ACCENT),
+    }

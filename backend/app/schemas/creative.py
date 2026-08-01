@@ -10,7 +10,7 @@ POST /creative/{creative_id}/compose   → CreativeResponse w/ final_image_url (
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field  # noqa: F401
 
 
 # ─── POST /creative/generate ──────────────────────────────────────────────────
@@ -34,6 +34,30 @@ class GenerateCreativeRequest(BaseModel):
         default="square", pattern="^(square|portrait|landscape)$",
         description="square (social), portrait (print/A4 poster), or landscape (banner)",
     )
+    product_facts: dict | None = Field(
+        default=None,
+        description="Owner-confirmed product facts for THIS generation (else the saved facts are used)",
+    )
+    campaign_type: str = Field(
+        default="standard",
+        pattern="^(standard|new_arrival|product_spotlight|premium_collection|limited_edition)$",
+        description="Product details appear automatically for the four product-led types",
+    )
+    show_product_details: bool = Field(
+        default=False,
+        description="Owner explicitly opts in to showing product details on the ad",
+    )
+    ad_layout: str = Field(
+        default="auto",
+        pattern="^(auto|poster|rail|band|banner)$",
+        description="How the text is typeset over the scene; auto suits it to the format",
+    )
+
+
+class ProductFactsIn(BaseModel):
+    product_name: str = Field(min_length=1, max_length=500)
+    category: str | None = Field(default=None, max_length=100)
+    facts: dict = Field(default_factory=dict)
 
 
 # ─── Phase 11: price overlay ──────────────────────────────────────────────────
@@ -71,6 +95,8 @@ class CreativeResponse(BaseModel):
     image_url: str
     final_image_url: str | None = None
     price_items: list | None = None
+    design_plan: dict | None = None
+    design_json: dict | None = None
 
     instagram_caption: str
     facebook_post: str

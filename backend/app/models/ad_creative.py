@@ -85,6 +85,13 @@ class AdCreative(Base):
     website_banner_headline: Mapped[str] = mapped_column(String(200), nullable=False)
     website_banner_text: Mapped[str] = mapped_column(Text, nullable=False)
 
+    # ── Professional creative (design plan + editable overlay) ────────────────
+    # design_plan: the validated structured plan the image was composed from.
+    # design_json: the editable react-konva overlay (canvas, source image, labels)
+    #   — lets the owner reopen and edit an ad WITHOUT regenerating the AI image.
+    design_plan: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    design_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+
     # ── Meta ──────────────────────────────────────────────────────────────────
     model_used: Mapped[str] = mapped_column(
         String(100),

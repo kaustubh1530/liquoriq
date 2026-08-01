@@ -31,6 +31,27 @@ settings = get_settings()
 _client = AsyncOpenAI(api_key=settings.openai_api_key)
 
 
+def _quota_message(exc: Exception) -> str:
+    """
+    The OpenAI SDK raises RateLimitError for BOTH "you're going too fast" (retry
+    works) and "you're out of credits" (retrying never works). Telling the owner
+    to "try again in a moment" when the account has no balance sends them in
+    circles, so we read the error code and say which one it actually is.
+    """
+    body = getattr(exc, "body", None) or {}
+    err = body.get("error", {}) if isinstance(body, dict) else {}
+    code = (err.get("code") or "") or getattr(exc, "code", "") or ""
+    err_type = err.get("type") or ""
+    blob = f"{code} {err_type} {exc}".lower()
+
+    if "insufficient_quota" in blob or "credit_balance_exhausted" in blob or "billing" in blob:
+        return (
+            "Your OpenAI account is out of credits, so nothing can be generated. "
+            "Add credits at platform.openai.com → Settings → Billing, then retry."
+        )
+    return "OpenAI is rate limiting us right now. Wait a few seconds and try again."
+
+
 async def generate_json_response(system_prompt: str, user_prompt: str) -> dict:
     """
     Call GPT-4o with JSON mode and return a parsed dict.
@@ -54,8 +75,8 @@ async def generate_json_response(system_prompt: str, user_prompt: str) -> dict:
         logger.error("OpenAI connection error: %s", e)
         raise RuntimeError(f"Could not connect to OpenAI: {e}") from e
     except RateLimitError as e:
-        logger.error("OpenAI rate limit hit: %s", e)
-        raise RuntimeError("OpenAI rate limit reached. Try again in a moment.") from e
+        logger.error("OpenAI quota/rate error: %s", e)
+        raise RuntimeError(_quota_message(e)) from e
     except APIStatusError as e:
         logger.error("OpenAI API error %s: %s", e.status_code, e.message)
         raise RuntimeError(f"OpenAI API error {e.status_code}: {e.message}") from e
@@ -107,8 +128,8 @@ async def generate_image(prompt: str, size: str = "1024x1024") -> bytes:
         logger.error("DALL-E connection error: %s", e)
         raise RuntimeError(f"Could not connect to OpenAI: {e}") from e
     except RateLimitError as e:
-        logger.error("DALL-E rate limit hit: %s", e)
-        raise RuntimeError("OpenAI rate limit reached. Try again in a moment.") from e
+        logger.error("Image generation quota/rate error: %s", e)
+        raise RuntimeError(_quota_message(e)) from e
     except APIStatusError as e:
         # DALL-E rejects prompts it considers policy-violating with a 400.
         # Surface a readable message so the route can return it to the user.
@@ -150,8 +171,8 @@ async def generate_image_edit(prompt: str, product_png: bytes, size: str = "1024
         logger.error("Image edit connection error: %s", e)
         raise RuntimeError(f"Could not connect to OpenAI: {e}") from e
     except RateLimitError as e:
-        logger.error("Image edit rate limit: %s", e)
-        raise RuntimeError("OpenAI rate limit reached. Try again in a moment.") from e
+        logger.error("Image edit quota/rate error: %s", e)
+        raise RuntimeError(_quota_message(e)) from e
     except APIStatusError as e:
         logger.error("Image edit API error %s: %s", e.status_code, e.message)
         raise RuntimeError(f"Image generation failed ({e.status_code}): {e.message}") from e

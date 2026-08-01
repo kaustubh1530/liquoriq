@@ -1,17 +1,30 @@
 /**
- * Creative.jsx — Ad Creative studio (Phase 10, simplified Phase 15+)
+ * Creative.jsx — MODULE 1: AI AD CREATOR (page)
  *
- * The AI now renders a FINISHED festive ad — scene, hero product, headline,
- * offer, and store name are all baked into the image. So there's no separate
- * price-overlay step anymore (it produced ugly double-text). Instead the owner
- * can set the exact promo price/offer to render, then Generate / Regenerate.
+ * ONE job: generate a beautiful, finished advertisement. The AI paints the
+ * scene, product and lighting; the server typesets the headline, exact price
+ * and store name. Product details appear only when the campaign type calls for
+ * them or the owner explicitly opts in.
+ *
+ * Promotional badges, stickers and price tags are NOT made here — that's the
+ * Label Studio, a separate tool. This page just hands the finished ad over.
  */
 
 import { useEffect, useState } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { aiApi, creativeApi, assetUrl } from '../api/client'
 import Layout from '../components/Layout'
-import { Megaphone, Download, RefreshCw, Image as ImageIcon, Upload, ChevronDown, ChevronUp } from 'lucide-react'
+import { Palette, Download, RefreshCw, Image as ImageIcon, Upload, ChevronDown, ChevronUp, Tag } from 'lucide-react'
+
+// Campaign types where customer-facing product details earn their place on the
+// ad. Everything else stays clean and minimal unless the owner opts in.
+const CAMPAIGN_TYPES = [
+  { v: 'standard',           label: 'Standard promotion', details: false },
+  { v: 'new_arrival',        label: 'New arrival',        details: true },
+  { v: 'product_spotlight',  label: 'Product spotlight',  details: true },
+  { v: 'premium_collection', label: 'Premium collection', details: true },
+  { v: 'limited_edition',    label: 'Limited edition',    details: true },
+]
 
 function CopyBox({ label, text }) {
   const [copied, setCopied] = useState(false)
@@ -38,6 +51,7 @@ function CopyBox({ label, text }) {
 
 export default function Creative() {
   const [searchParams] = useSearchParams()
+  const navigate = useNavigate()
   const preselected = searchParams.get('strategy')
 
   const [strategies, setStrategies] = useState([])
@@ -48,10 +62,20 @@ export default function Creative() {
   const [productUrl, setProductUrl] = useState('')      // Phase 16: real bottle photo
   const [format, setFormat] = useState('square')        // square | portrait | landscape
   const [showMore, setShowMore] = useState(false)       // optional look-and-feel
+  const [showFacts, setShowFacts] = useState(false)     // product details
+  const [factsText, setFactsText] = useState('')        // one "key: value" per line
+  const [category, setCategory] = useState('')
+  const [layout, setLayout] = useState('auto')       // how the text is typeset
+  const [campaignType, setCampaignType] = useState('standard')
+  const [wantDetails, setWantDetails] = useState(false)  // owner opt-in for details
   const [uploading, setUploading] = useState(false)
   const [loading, setLoading] = useState(true)
   const [generating, setGenerating] = useState(false)
   const [error, setError] = useState('')
+
+  // Details are automatic for product-led campaigns; the toggle is the manual opt-in
+  const autoDetails = CAMPAIGN_TYPES.find((c) => c.v === campaignType)?.details ?? false
+  const detailsOn = autoDetails || wantDetails
 
   // Load strategy list once; default to preselected or newest
   useEffect(() => {
@@ -87,28 +111,53 @@ export default function Creative() {
     })()
   }, [selectedId])
 
-  // Load the saved library photo for the hero product ("upload once, reuse forever")
+  // Load the saved library photo + facts for the hero product (reused each time)
   useEffect(() => {
-    if (!heroProduct) { setProductUrl(''); return }
+    if (!heroProduct) { setProductUrl(''); setFactsText(''); return }
     ;(async () => {
       try {
         const { data } = await creativeApi.getProductPhoto(heroProduct)
         setProductUrl(data.product_image_url || '')
-      } catch {
-        setProductUrl('')
-      }
+      } catch { setProductUrl('') }
+      try {
+        const { data } = await creativeApi.getFacts(heroProduct)
+        const f = data.facts || {}
+        setFactsText(Object.entries(f).map(([k, v]) => `${k}: ${v}`).join('\n'))
+      } catch { setFactsText('') }
     })()
   }, [heroProduct])
+
+  // Parse the "key: value" lines into a facts object (only confirmed, owner-entered)
+  const parseFacts = () => {
+    const facts = {}
+    for (const line of factsText.split('\n')) {
+      const i = line.indexOf(':')
+      if (i > 0) {
+        const k = line.slice(0, i).trim().toLowerCase().replace(/\s+/g, '_')
+        const v = line.slice(i + 1).trim()
+        if (k && v) facts[k] = v
+      }
+    }
+    return facts
+  }
 
   const handleGenerate = async () => {
     setError('')
     setGenerating(true)
     try {
+      const facts = parseFacts()
+      if (heroProduct && Object.keys(facts).length) {
+        try { await creativeApi.saveFacts(heroProduct, category.trim() || null, facts) } catch { /* noop */ }
+      }
       const { data } = await creativeApi.generate(selectedId, {
         offerOverride: offer.trim() || null,
         instructions: instructions.trim() || null,
         productImageUrl: productUrl || null,
         imageFormat: format,
+        productFacts: Object.keys(facts).length ? facts : null,
+        campaignType,
+        showProductDetails: wantDetails,
+        adLayout: layout,
       })
       setCreative(data)
     } catch (err) {
@@ -117,6 +166,9 @@ export default function Creative() {
       setGenerating(false)
     }
   }
+
+  // Hand the finished ad to the Label Studio — a separate tool, not an edit mode.
+  const openLabelStudio = () => navigate(`/labels?creative=${creative.id}`)
 
   const handlePhoto = async (e) => {
     const file = e.target.files?.[0]
@@ -137,15 +189,16 @@ export default function Creative() {
   return (
     <Layout>
       <div className="max-w-3xl mx-auto">
-        <h1 className="text-2xl font-bold text-gray-900 mb-1">Ad Creative</h1>
+        <h1 className="text-2xl font-bold text-gray-900 mb-1">AI Ad Creator</h1>
         <p className="text-sm text-gray-500 mb-8">
-          A finished, ready-to-post ad — scene, product, offer, and your store name, all in one image
+          A finished, ready-to-post advertisement — scene, product, headline, your exact price and store name.
+          Add promotional badges afterwards in <span className="font-medium">Label Studio</span>.
         </p>
 
         {/* ── Generate panel ── */}
         <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6 mb-8">
           <div className="flex items-center gap-3 mb-4">
-            <Megaphone size={20} className="text-brand-500" />
+            <Palette size={20} className="text-brand-500" />
             <h2 className="text-sm font-semibold text-gray-700">Create ad</h2>
           </div>
 
@@ -187,6 +240,50 @@ export default function Creative() {
                 </div>
               </div>
 
+              {/* Campaign type — drives whether product details appear at all */}
+              <div>
+                <label className="block text-xs font-medium text-gray-500 mb-1">Campaign type</label>
+                <select
+                  value={campaignType}
+                  onChange={(e) => setCampaignType(e.target.value)}
+                  className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
+                >
+                  {CAMPAIGN_TYPES.map((c) => (
+                    <option key={c.v} value={c.v}>{c.label}</option>
+                  ))}
+                </select>
+                <p className="text-[11px] text-gray-400 mt-1">
+                  {autoDetails
+                    ? 'Product details are included automatically for this campaign type.'
+                    : 'Kept clean and minimal — no product details unless you turn them on below.'}
+                </p>
+              </div>
+
+              {/* Text layout — how the caption sits over the photo */}
+              <div>
+                <label className="block text-xs font-medium text-gray-500 mb-1">Text layout</label>
+                <div className="inline-flex rounded-xl border border-gray-200 overflow-hidden text-xs font-semibold flex-wrap">
+                  {[
+                    { v: 'auto', label: 'Auto' },
+                    { v: 'poster', label: 'Poster' },
+                    { v: 'band', label: 'Bottom band' },
+                    { v: 'rail', label: 'Side column' },
+                    { v: 'banner', label: 'Top banner' },
+                  ].map((l) => (
+                    <button key={l.v} onClick={() => setLayout(l.v)}
+                      className={`px-3.5 py-1.5 transition-colors ${
+                        layout === l.v ? 'bg-brand-500 text-white' : 'bg-white text-gray-500 hover:bg-gray-50'
+                      }`}>
+                      {l.label}
+                    </button>
+                  ))}
+                </div>
+                <p className="text-[11px] text-gray-400 mt-1">
+                  Poster is the premium spirits look — big headline over the photo with a painted price mark.
+                  Auto picks the one that suits your format.
+                </p>
+              </div>
+
               {/* Format — compact segmented control + photo status on one line */}
               <div className="flex items-center justify-between gap-4 flex-wrap">
                 <div className="inline-flex rounded-xl border border-gray-200 overflow-hidden text-xs font-semibold">
@@ -219,6 +316,34 @@ export default function Creative() {
                     {uploading ? 'Uploading…' : `Add real photo${heroProduct ? '' : ''}`}
                     <input type="file" accept="image/*" onChange={handlePhoto} className="hidden" disabled={uploading} />
                   </label>
+                )}
+              </div>
+
+              {/* Product details — confirmed facts used (and only these) on the ad */}
+              <div>
+                <button onClick={() => setShowFacts(!showFacts)}
+                  className="text-xs font-medium text-gray-400 hover:text-gray-600 flex items-center gap-1">
+                  {showFacts ? <ChevronUp size={13} /> : <ChevronDown size={13} />} Product details (optional — for new arrivals & premium products)
+                </button>
+                {showFacts && (
+                  <div className="mt-2 space-y-2">
+                    <label className="flex items-center gap-2 text-xs text-gray-600">
+                      <input type="checkbox" checked={detailsOn} disabled={autoDetails}
+                        onChange={(e) => setWantDetails(e.target.checked)} />
+                      Show product details on the advertisement
+                      {autoDetails && <span className="text-gray-400">(always on for {CAMPAIGN_TYPES.find((c) => c.v === campaignType)?.label.toLowerCase()})</span>}
+                    </label>
+                    <input value={category} onChange={(e) => setCategory(e.target.value)}
+                      placeholder="Category (e.g. Whiskey, Wine, Tequila)"
+                      className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500" />
+                    <textarea value={factsText} onChange={(e) => setFactsText(e.target.value)}
+                      rows={4}
+                      placeholder={"One fact per line, as label: value —\nproof: 90 proof\nage: aged 12 years\norigin: Lynchburg, Tennessee\ntasting notes: caramel, oak, vanilla"}
+                      className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-brand-500 resize-none" />
+                    <p className="text-[11px] text-gray-400">
+                      Only these confirmed facts are used on the ad — the AI never invents proof, age, awards, or origin. Saved and reused for {heroProduct || 'this product'}.
+                    </p>
+                  </div>
                 )}
               </div>
 
@@ -262,25 +387,34 @@ export default function Creative() {
 
         {creative && !generating && (
           <div className="space-y-6">
-            {/* The finished ad */}
+            {/* The finished ad — the AI Ad Creator's job ends here */}
             <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
               <img
                 src={assetUrl(creative.image_url)}
                 alt="Finished ad"
                 className="w-full max-h-[70vh] object-contain bg-gray-50"
               />
-              <div className="flex items-center justify-between px-6 py-4">
+              <div className="flex items-center justify-between px-6 py-4 gap-4 flex-wrap">
                 <p className="text-xs text-gray-400">
                   {new Date(creative.created_at).toLocaleString()} · ready to post
                 </p>
-                <a
-                  href={assetUrl(creative.image_url)}
-                  download="liquoriq-ad.png"
-                  className="flex items-center gap-1.5 text-xs font-semibold text-brand-500 hover:underline"
-                >
-                  <Download size={14} />
-                  Download ad
-                </a>
+                <div className="flex items-center gap-4">
+                  <button
+                    onClick={openLabelStudio}
+                    className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg border border-gray-200 text-gray-600 hover:border-brand-300 hover:text-brand-600 transition-colors"
+                  >
+                    <Tag size={14} />
+                    Add labels
+                  </button>
+                  <a
+                    href={assetUrl(creative.image_url)}
+                    download="liquoriq-ad.png"
+                    className="flex items-center gap-1.5 text-xs font-semibold text-brand-500 hover:underline"
+                  >
+                    <Download size={14} />
+                    Download ad
+                  </a>
+                </div>
               </div>
             </div>
 

@@ -36,6 +36,8 @@ from app.models import deal_buy  # noqa: F401 — Phase 15
 from app.models import product_photo  # noqa: F401 — Phase 16
 from app.models import customer  # noqa: F401 — Phase 19
 from app.models import campaign  # noqa: F401 — Phase 21
+from app.models import product_facts  # noqa: F401 — Professional Ad Upgrade
+from app.models import label_design  # noqa: F401 — Label Studio
 
 settings_app = get_settings()
 

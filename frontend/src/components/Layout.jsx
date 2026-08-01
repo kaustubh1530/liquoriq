@@ -8,7 +8,8 @@ import {
   LayoutDashboard,
   Upload,
   Sparkles,
-  Megaphone,
+  Palette,
+  Tag,
   ArrowLeftRight,
   Users,
   Store,
@@ -16,13 +17,16 @@ import {
 } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
 
+// Two distinct products, two distinct nav items: the AI Ad Creator makes the
+// advertisement; Label Studio adds promotional badges on top of one.
 const NAV = [
-  { to: '/dashboard',  label: 'Dashboard',   icon: LayoutDashboard },
-  { to: '/uploads',    label: 'Uploads',      icon: Upload },
-  { to: '/ai',         label: 'AI Strategy',  icon: Sparkles },
-  { to: '/creative',   label: 'Ad Creative',  icon: Megaphone },
-  { to: '/transfers',  label: 'Transfers',    icon: ArrowLeftRight },
-  { to: '/customers',  label: 'Customers',    icon: Users },
+  { to: '/dashboard',  label: 'Dashboard',      icon: LayoutDashboard },
+  { to: '/uploads',    label: 'Uploads',         icon: Upload },
+  { to: '/ai',         label: 'AI Strategy',     icon: Sparkles },
+  { to: '/creative',   label: 'AI Ad Creator',   icon: Palette },
+  { to: '/labels',     label: 'Label Studio',    icon: Tag },
+  { to: '/transfers',  label: 'Transfers',       icon: ArrowLeftRight },
+  { to: '/customers',  label: 'Customers',       icon: Users },
 ]
 
 export default function Layout({ children }) {

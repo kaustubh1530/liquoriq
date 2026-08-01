@@ -11,3 +11,5 @@ from app.models.deal_buy import DealBuy  # noqa: F401
 from app.models.product_photo import ProductPhoto  # noqa: F401
 from app.models.customer import Customer, CustomerPurchase  # noqa: F401
 from app.models.campaign import Campaign, MessageLog  # noqa: F401
+from app.models.product_facts import ProductFacts  # noqa: F401
+from app.models.label_design import LabelDesign  # noqa: F401

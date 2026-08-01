@@ -1,22 +1,26 @@
 """
-services/creative_service.py — Ad creative generation pipeline (Phase 10)
+services/creative_service.py — MODULE 1: AI AD CREATOR
+
+RESPONSIBILITY: produce ONE beautiful, finished, ready-to-post advertisement.
+It ends there. It does not know what a badge is.
 
 Pipeline (one call to generate_ad_creative does all of this):
   1. Load the strategy (must belong to the requesting store — auth boundary)
-  2. GPT-4o call #1: turn the strategy into platform-specific copy
-     (Instagram, Facebook, Uber Eats, DoorDash, website banner)
-     PLUS a "image_prompt" field — a DALL-E-ready art-direction prompt
-  3. DALL-E 3 call: generate the 1024x1024 ad image from that prompt
-  4. Save the PNG to disk (settings.creatives_dir, served at /static/creatives)
-  5. Save everything to ad_creatives and return the ORM object
+  2. GPT-4o: strategy → STRUCTURED design plan + platform copy
+  3. design_plan.validate_design_plan(): deterministic scrub/caps/fact-gating
+  4. gpt-image-1: render the SCENE + HERO PRODUCT only — no text, no badges
+  5. ad_text_renderer: stamp the headline, EXACT price, store name (and, only
+     when gated on, a few product details) with Pillow
+  6. Save the finished ad to ad_creatives and return the ORM object
 
-Why let GPT-4o write the DALL-E prompt instead of templating one ourselves?
-  GPT-4o knows the strategy context (products, offer, audience) and writes a
-  far richer art-direction prompt than any f-string template could. We save
-  the prompt to the DB so every image is fully auditable/reproducible.
+The finished ad contains: attractive background, correct product, premium
+lighting, professional composition, exact selling price, store name, headline.
+Badges / stickers / ribbons / deal labels / coupons are NOT produced here —
+they belong to MODULE 2, the Label Studio (services/shelf_label.py), which makes
+printable shelf labels and never touches this image.
 
-Cost note: one creative = 1 GPT-4o call (~$0.01) + 1 DALL-E 3 standard
-image ($0.04) ≈ $0.05 per generation.
+Cost note: one creative = 1 GPT-4o call (~$0.01) + 1 gpt-image-1 image
+(~$0.04-0.19 at quality=high). The Pillow text layer is free.
 """
 
 import json
@@ -59,66 +63,68 @@ settings = get_settings()
 
 # ─── Prompt templates ──────────────────────────────────────────────────────────
 
-SYSTEM_PROMPT = """You are a senior creative director at an ad agency that
-specializes in local retail — specifically independent liquor stores. You turn
-promotion strategies into scroll-stopping, platform-native ad copy AND a
-finished, ready-to-post promotional AD IMAGE.
+SYSTEM_PROMPT = """You are a senior art director at a top ad agency, art-directing
+a PROFESSIONAL advertisement photograph for an independent liquor store — the
+quality of a paid agency campaign.
 
-Platform rules you always follow:
-  - instagram_caption: punchy, 1-3 short lines, 3-5 relevant hashtags at the
-    end, one tasteful emoji allowed. Must include a call to action.
-  - facebook_post: 2-4 sentences, warmer/community tone, mention the offer
-    explicitly, end with a call to action. No hashtags.
-  - ubereats_description: 1-2 sentences for a delivery app promo banner.
-    Focus on convenience + the deal. No hashtags, no emojis.
-  - doordash_description: 1-2 sentences, similar to Uber Eats but not
-    identical wording. No hashtags, no emojis.
-  - website_banner_headline: max 8 words, high impact.
-  - website_banner_text: one supporting sentence with the offer + urgency.
+You produce a STRUCTURED DESIGN PLAN plus platform copy.
 
-  - image_prompt: art direction for a FINISHED, PROFESSIONAL SOCIAL-MEDIA AD —
-    NOT a plain studio product photo. Think of a polished festive ad you'd see
-    on a liquor store's Instagram. It MUST:
-      * Set a rich, CREATIVE SCENE that matches the occasion (e.g. Labor Day
-        backyard BBQ with string lights and flags; New Year's Eve gold-and-black
-        party table with confetti; Christmas cozy fireplace with garland;
-        Cinco de Mayo colorful fiesta). Include lifestyle elements, seasonal
-        props, a beautifully styled surface, warm depth-of-field background,
-        and cinematic mood lighting. Be imaginative and eye-catching.
-      * Feature ONE HERO PRODUCT — the single primary promoted item — front and
-        center, sharply lit, described by its real name and type (e.g. "a bottle
-        of Booker's Bourbon as the clear hero"). You may add ONE or two poured
-        glasses or a garnish, but DO NOT add other/unrelated liquor brands or a
-        clutter of random bottles. The one promoted product is the star.
-      * RENDER TEXT directly in the image, exactly as given, spelled correctly:
-        a bold HEADLINE (occasion/campaign name), the CUSTOMER-FACING OFFER
-        (only the sale price or discount, e.g. "$89.99" or "20% OFF"), and the
-        STORE NAME. Place each cleanly (headline on a top sign, offer on a
-        chalkboard, store name on a bottom banner). Keep text short.
-      * KEEP ALL TEXT FULLY INSIDE THE FRAME with generous safe margins — at
-        least ~10% padding from every edge. The headline, price, and store name
-        must never touch or get cropped by the top, bottom, or side edges. Size
-        the text to fit comfortably within the canvas.
-      * ABSOLUTELY NEVER render cost price, margin, profit, "margin", percentages
-        of margin, or any internal/owner-only number. Those are confidential —
-        the customer sees ONLY the sale price or discount.
-      * CHOOSE a color palette and setting that specifically MATCH THE OCCASION —
-        do NOT default to warm amber/brown every time. Vary it boldly per event:
-        New Year's Eve = black + gold + confetti; Christmas = deep red + green +
-        snow; July 4th = red/white/blue; Cinco de Mayo = bright fiesta pinks/
-        turquoise/orange; Halloween = orange + purple + moody dark; Valentine's =
-        red + blush pink; St. Patrick's = rich greens; summer BBQ = bright airy
-        blues/greens with sunlight. Each ad should feel DISTINCT — pick a fresh
-        background, setting, and palette, not the same cozy amber scene.
-    Adults 25+ only in any scene; classy, never excessive-drinking imagery.
+CRITICAL DIVISION OF LABOUR: you direct the PHOTOGRAPH only — the scene, the
+product, the lighting, the composition, the palette. You do NOT design text
+placement, and you NEVER call for badges, stickers, ribbons, banners, seals,
+starbursts, price tags, discount cards, coupons, or sale labels. The headline,
+price and store name are typeset separately by our own renderer, and promotional
+badges are added later by the store owner in a separate editor.
 
-Alcohol advertising rules: never target minors, never encourage excessive
-drinking, keep everything classy.
+Design principles you always follow:
+  - ONE clear focal point: the hero bottle, sharply lit, on the RIGHT of frame.
+  - A RICH, ATTRACTIVE, atmospheric themed scene (real depth, props, mood) that
+    makes the ad eye-catching — kept slightly softer behind the product so the
+    bottle stays the hero. Never plain or empty.
+  - The LEFT THIRD stays visually calm (darker or softly blurred) because a
+    caption is typeset there afterwards.
+  - A bold, cohesive colour palette matched to the occasion (never default to
+    warm amber every time).
 
-Always respond with valid JSON matching EXACTLY this schema — no extra keys,
-no missing keys:
+FACTS RULE: use ONLY product facts explicitly provided to you. NEVER invent a
+proof, ABV, age, award, origin, distillery, region, ingredients, or bottle size.
+If a fact isn't provided, omit it — do not guess.
+FORBIDDEN: never mention cost, margin, markup, wholesale, or profit anywhere.
+Adults 25+ only; classy; never depict excessive drinking.
+
+Design-plan fields:
+  eyebrow           — 1-3 word kicker above the headline (e.g. "NOW IN STORE",
+                      "LABOR DAY", "NEW ARRIVAL") — or empty
+  headline          — the campaign/occasion hook, ≤6 words, punchy (we typeset it)
+  subheadline       — one short supporting line (or empty)
+  accent_color      — a HEX colour ("#c1121f") pulled FROM the scene you just
+                      art-directed: the shade our typography and price block
+                      should use so the caption belongs to this photograph.
+                      Must contrast well against white text.
+  visual_theme      — the mood/setting in a phrase
+  palette           — 2-3 colours matched to the occasion
+  typography_style  — the type mood we should match when typesetting
+  product_placement — where/how the hero bottle sits
+  product_details   — array of ≤3 SHORT customer-facing fact/benefit phrases,
+                      using ONLY confirmed facts (may be shown or suppressed)
+  background        — a rich, attractive, atmospheric themed scene (never plain)
+  lighting          — cinematic lighting description
+  composition       — layout notes (focal point, negative space on the left)
+
+Platform copy rules: instagram_caption (punchy, 3-5 hashtags, 1 emoji, CTA);
+facebook_post (2-4 warm sentences + CTA, no hashtags); ubereats_description and
+doordash_description (1-2 sentences, distinct, no hashtags/emojis);
+website_banner_headline (≤8 words); website_banner_text (one urgency sentence).
+
+Respond with valid JSON EXACTLY:
 {
-  "image_prompt": "string",
+  "design_plan": {
+    "eyebrow": "string", "headline": "string", "subheadline": "string",
+    "visual_theme": "string", "palette": "string", "accent_color": "#rrggbb",
+    "typography_style": "string", "product_placement": "string",
+    "product_details": ["string"],
+    "background": "string", "lighting": "string", "composition": "string"
+  },
   "instagram_caption": "string",
   "facebook_post": "string",
   "ubereats_description": "string",
@@ -148,54 +154,54 @@ def _build_user_prompt(
     strategy: AIStrategyReport,
     offer_override: str | None = None,
     instructions: str | None = None,
+    product_facts: dict | None = None,
+    campaign_type: str | None = None,
 ) -> str:
-    """Feed the full strategy context so the copy AND image are grounded in real data."""
+    """Feed strategy + confirmed product facts so the plan is grounded, not invented."""
     product_list = list(strategy.products_to_promote or [])
     hero = product_list[0] if product_list else "the promoted bottle"
-    products = json.dumps(product_list)
     occasion = strategy.occasion or strategy.strategy_title
-    # Owner can override the exact promo price/offer that gets rendered on the ad.
     base_offer = offer_override.strip() if offer_override and offer_override.strip() else strategy.recommended_offer
     customer_offer = _strip_internal_numbers(base_offer)
     owner_hint = (instructions or "").strip()
-    # Nudge variety so repeated ads don't all look the same (gpt-image-1 tends to
-    # anchor on one look). Randomize composition/lighting/angle each render.
+
+    facts_txt = "None provided — DO NOT invent any product facts."
+    if product_facts:
+        confirmed = {k: v for k, v in product_facts.items() if v}
+        if confirmed:
+            facts_txt = json.dumps(confirmed)
+
     variety = random.choice([
-        "wide establishing shot with the product slightly off-center and lots of scene depth",
-        "tight top-down flat-lay style with props arranged around the bottle",
-        "dramatic low-angle hero shot with strong rim lighting and a dark backdrop",
-        "bright daylight lifestyle scene, airy and colorful, shallow depth of field",
-        "cozy evening scene with bokeh lights and rich saturated color",
-        "clean modern studio-meets-lifestyle look with a bold single accent color",
-        "outdoor golden-hour setting with natural warm light and greenery",
+        "wide establishing composition with the product on the right third",
+        "clean modern studio-meets-lifestyle look with one bold accent colour",
+        "dramatic low-angle hero shot with strong rim lighting on a dark backdrop",
+        "bright airy daylight lifestyle scene with shallow depth of field",
+        "premium editorial layout with lots of negative space",
     ])
+
     return f"""Store: {strategy.store_name}
+Occasion / theme: {occasion}
+Campaign: {strategy.strategy_title}
+Campaign type: {(campaign_type or 'standard').replace('_', ' ')}
+HERO product (the ONLY bottle shown, no other brands): {hero}
+Customer-facing offer (exact price/discount — this is what the price shows): {customer_offer}
+Target customers: {strategy.target_customer_segment}
 
-Promotion strategy to turn into ad creative:
-  - Occasion / theme: {occasion}
-  - Campaign: {strategy.strategy_title}
-  - Products to promote (for the COPY): {products}
-  - HERO product for the IMAGE (feature ONLY this one bottle, no other brands): {hero}
-  - Customer-facing offer for the IMAGE (sale price / discount ONLY): {customer_offer}
-  - Full offer for the COPY text (may mention value, never margin on the image): {strategy.recommended_offer}
-  - Target customers: {strategy.target_customer_segment}
+CONFIRMED PRODUCT FACTS (use ONLY these; invent nothing else): {facts_txt}
 
-{f'''OWNER'S ART-DIRECTION REQUESTS — follow these closely in the image_prompt
-(theme/event/layout/mood/changes): {owner_hint}
-''' if owner_hint else ''}
-Generate the complete ad creative package (all platforms + image_prompt).
-The image_prompt must produce a finished, festive, occasion-themed ad with "{hero}"
-as the single hero product, the headline, the CUSTOMER-FACING offer, and the store
-name "{strategy.store_name}" rendered in the image — like a professional social post.
-For visual VARIETY use this composition direction: {variety}. Match the palette and
-setting to the occasion (do not default to warm amber).
-NEVER put cost, margin, or profit numbers in the image. Use real product names in copy."""
+{f"OWNER'S ART-DIRECTION BRIEF (the primary creative brief — follow it closely): {owner_hint}" if owner_hint else ""}
+Composition preference for variety: {variety}.
+
+Produce the structured design_plan + platform copy. Keep the headline ≤6 words and
+product_details to at most 3 SHORT confirmed facts/benefits. Never invent facts;
+never mention cost/margin/profit. Remember: direct the PHOTOGRAPH only — no text
+layout, and no badges/stickers/ribbons/price-tags anywhere in the scene."""
 
 
-# ─── Required fields validation ────────────────────────────────────────────────
+# ─── Validation ────────────────────────────────────────────────────────────────
 
 REQUIRED_FIELDS = {
-    "image_prompt",
+    "design_plan",
     "instagram_caption",
     "facebook_post",
     "ubereats_description",
@@ -210,9 +216,11 @@ def _validate_creative(data: dict) -> None:
     missing = REQUIRED_FIELDS - set(data.keys())
     if missing:
         raise ValueError(f"OpenAI response missing fields: {missing}")
-    empty = [k for k in REQUIRED_FIELDS if not data.get(k)]
+    empty = [k for k in REQUIRED_FIELDS if k != "design_plan" and not data.get(k)]
     if empty:
         raise ValueError(f"OpenAI response has empty fields: {empty}")
+    if not isinstance(data.get("design_plan"), dict):
+        raise ValueError("OpenAI response missing a design_plan object")
 
 
 # ─── Public service functions ──────────────────────────────────────────────────
@@ -225,12 +233,20 @@ async def generate_ad_creative(
     instructions: str | None = None,
     product_image_url: str | None = None,
     image_format: str = "square",
+    product_facts: dict | None = None,
+    campaign_type: str | None = None,
+    show_product_details: bool = False,
+    ad_layout: str | None = None,
 ) -> AdCreative:
     """
-    Full pipeline: strategy → GPT-4o copy → gpt-image-1 image → disk → DB.
-    offer_override sets the EXACT promo price; instructions steer the art direction.
-    product_image_url (Phase 16): if given, the REAL product photo becomes the
-    accurate hero — the scene is composed around it via the image-edit endpoint.
+    Full pipeline: strategy → GPT-4o design plan (validated) → gpt-image-1 scene
+    → deterministic Pillow text layer → DB.
+
+    offer_override sets the EXACT promo price; instructions are the primary brief.
+    product_facts (confirmed, owner-controlled) ground the plan — never invented.
+    product_image_url (Phase 16): real product photo → accurate hero via edit.
+    campaign_type / show_product_details gate whether customer-facing product
+    details appear at all (otherwise the ad stays clean and minimal).
 
     Raises:
         ValueError   — strategy not found / bad AI response
@@ -250,19 +266,24 @@ async def generate_ad_creative(
     logger.info("Generating ad creative for strategy=%s (offer_override=%s)",
                 strategy_id, bool(offer_override))
 
-    # 2. GPT-4o: platform copy + image prompt
+    # 2. GPT-4o: structured design plan + platform copy
     ai_data = await generate_json_response(
         SYSTEM_PROMPT,
-        _build_user_prompt(strategy, offer_override, instructions),
+        _build_user_prompt(strategy, offer_override, instructions, product_facts, campaign_type),
     )
     _validate_creative(ai_data)
 
+    hero_name = (strategy.products_to_promote or [None])[0]
+
     # Auto-use the hero product's saved library photo ("upload once, reuse forever")
-    if not product_image_url:
+    if not product_image_url and hero_name:
         from app.services.product_photo_service import get_photo_url
-        hero_name = (strategy.products_to_promote or [None])[0]
-        if hero_name:
-            product_image_url = await get_photo_url(store_id, str(hero_name), db)
+        product_image_url = await get_photo_url(store_id, str(hero_name), db)
+
+    # Auto-use saved product facts if the caller didn't pass any this time
+    if not product_facts and hero_name:
+        from app.services.product_facts_service import get_facts
+        product_facts = await get_facts(store_id, str(hero_name), db)
 
     # Map the chosen format to a gpt-image-1 size.
     #   square   1024x1024  → social posts
@@ -274,28 +295,47 @@ async def generate_ad_creative(
         "landscape": "1536x1024",
     }.get(image_format, "1024x1024")
 
-    # 3. Generate the ad image — real-photo edit path if a product photo is available
+    # Validate the AI design plan deterministically, then compose the image prompt.
+    from app.services import design_plan as dp
+    hero = (strategy.products_to_promote or ["the promoted bottle"])[0]
+    base_offer = offer_override.strip() if offer_override and offer_override.strip() else strategy.recommended_offer
+    customer_offer = _strip_internal_numbers(base_offer)
+    plan = dp.validate_design_plan(
+        ai_data["design_plan"], str(hero), customer_offer, product_facts,
+        campaign_type=campaign_type, owner_wants_details=show_product_details,
+    )
+    # The AI paints the SCENE + PRODUCT only: no text, no badges. Text is typeset
+    # below by Pillow so it is never cropped and the price is always exact.
+    image_prompt = dp.compose_image_prompt(plan, strategy.store_name)
+
+    # 3. Generate the scene — real-photo edit path if a product photo is available
     if product_image_url:
         product_png = _to_png(await fetch_image(product_image_url))
         edit_prompt = (
             "Using the provided product photo as the EXACT hero bottle — preserve its "
-            "real label, shape, and colors, do NOT redraw or rename the label — build a "
-            "finished, festive, ready-to-post liquor-store ad around it. "
-            + ai_data["image_prompt"]
+            "real label, shape, and colors, do NOT redraw or rename the label. "
+            + image_prompt
         )
         png_bytes = await generate_image_edit(prompt=edit_prompt, product_png=product_png, size=size)
     else:
-        png_bytes = await generate_image(prompt=ai_data["image_prompt"], size=size)
+        png_bytes = await generate_image(prompt=image_prompt, size=size)
 
-    # 4. Persist image (local disk in dev, Cloudinary CDN in prod)
+    # 4. Typeset the deterministic ad text onto the scene → the FINISHED ad.
+    #    Headline, exact price, store name (+ gated product details). Never badges.
+    from app.services.ad_text_renderer import render_ad_text
+    png_bytes = await render_ad_text(
+        png_bytes, dp.ad_text_spec(plan, strategy.store_name), ad_layout
+    )
+
+    # 5. Persist image (local disk in dev, Cloudinary CDN in prod)
     image_url = await save_image(png_bytes, prefix="ad")
-    logger.info("Ad image saved: %s (%d KB)", image_url, len(png_bytes) // 1024)
+    logger.info("Finished ad saved: %s (%d KB)", image_url, len(png_bytes) // 1024)
 
-    # 5. Save to DB
+    # 6. Save to DB
     creative = AdCreative(
         store_id=store_id,
         strategy_id=strategy_id,
-        image_prompt=ai_data["image_prompt"],
+        image_prompt=image_prompt,
         image_url=image_url,
         instagram_caption=ai_data["instagram_caption"],
         facebook_post=ai_data["facebook_post"],
@@ -303,6 +343,9 @@ async def generate_ad_creative(
         doordash_description=ai_data["doordash_description"],
         website_banner_headline=ai_data["website_banner_headline"],
         website_banner_text=ai_data["website_banner_text"],
+        design_plan=plan,
+        # design_json stays NULL here on purpose: label overlays belong to the
+        # Label Studio, which creates its own LabelDesign row when opened.
         model_used=f"{settings.openai_model} + {settings.openai_image_model}",
     )
     db.add(creative)

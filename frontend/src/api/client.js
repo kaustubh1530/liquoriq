@@ -64,6 +64,23 @@ api.interceptors.request.use((config) => {
   return config
 })
 
+// ── Guard: catch API paths missing from the Vite dev proxy ───────────────────
+// If a prefix isn't listed in vite.config.js, the dev server answers the XHR
+// itself with index.html and a 200. Axios then hands the caller an HTML STRING
+// where a list was expected, and the page dies far away with something useless
+// like "designs.map is not a function". Fail here instead, naming the fix.
+api.interceptors.response.use((response) => {
+  const type = response.headers?.['content-type'] ?? ''
+  if (typeof response.data === 'string' && type.includes('text/html')) {
+    const path = response.config?.url ?? 'this endpoint'
+    throw new Error(
+      `API call to "${path}" returned HTML instead of JSON — its prefix is probably ` +
+      `missing from the dev proxy in vite.config.js (or the backend isn't running).`
+    )
+  }
+  return response
+})
+
 // ── Auth endpoints ────────────────────────────────────────────────────────────
 
 export const authApi = {
@@ -204,17 +221,26 @@ export const customerApi = {
   audience: (segment) => api.get(`/customers/audience/${encodeURIComponent(segment)}`),
 }
 
-// ── Ad Creative endpoints ─────────────────────────────────────────────────────
+// ── MODULE 1: AI Ad Creator ───────────────────────────────────────────────────
+// Generates ONE finished advertisement. Knows nothing about labels/badges.
 
 export const creativeApi = {
   // gpt-image-1 + GPT-4o — slow call, 40-60s. offer + instructions + real photo + format.
-  generate: (strategyId, { offerOverride = null, instructions = null, productImageUrl = null, imageFormat = 'square' } = {}) =>
+  generate: (strategyId, {
+    offerOverride = null, instructions = null, productImageUrl = null,
+    imageFormat = 'square', productFacts = null,
+    campaignType = 'standard', showProductDetails = false, adLayout = 'auto',
+  } = {}) =>
     api.post('/creative/generate', {
       strategy_id: strategyId,
       offer_override: offerOverride,
       instructions,
       product_image_url: productImageUrl,
       image_format: imageFormat,
+      product_facts: productFacts,
+      campaign_type: campaignType,
+      show_product_details: showProductDetails,
+      ad_layout: adLayout,
     }),
   // Phase 16: upload a real bottle photo; if productName given it's saved to the
   // reusable library and auto-used for every future ad of that product.
@@ -228,12 +254,47 @@ export const creativeApi = {
   },
   // The saved library photo for a product (null if none on file)
   getProductPhoto: (productName) => api.get('/creative/product-photo', { params: { product_name: productName } }),
+  // Reusable owner-confirmed product facts (grounding — never invented by AI)
+  getFacts: (productName) => api.get('/creative/product-facts', { params: { product_name: productName } }),
+  saveFacts: (productName, category, facts) => api.post('/creative/product-facts', { product_name: productName, category, facts }),
   // Latest creative for a strategy — 404 if none generated yet
   get: (strategyId) => api.get(`/creative/${strategyId}`),
   // Phase 11: price prefill from the store's own sales data
   prices: (strategyId) => api.get(`/creative/${strategyId}/prices`),
   // Phase 11: compose final ad with exact prices overlaid (Pillow, server-side)
   compose: (creativeId, items) => api.post(`/creative/${creativeId}/compose`, { items }),
+}
+
+// ── MODULE 2: Label Studio ────────────────────────────────────────────────────
+// Promotional badges only. Never calls the AI; only references a base image URL.
+
+export const labelStudioApi = {
+  // Sizes / themes / icons come from the server — one source of truth with the
+  // renderer, so the editor can never offer something we can't draw.
+  options: () => api.get('/label-studio/options'),
+  // Best sellers + latest price from the store's OWN sales data (one-click prefill)
+  products: () => api.get('/label-studio/products'),
+  list: () => api.get('/label-studio/labels'),
+  create: (spec) => api.post('/label-studio/labels', { spec }),
+  get: (labelId) => api.get(`/label-studio/labels/${labelId}`),
+  save: (labelId, spec) => api.put(`/label-studio/labels/${labelId}`, { spec }),
+  remove: (labelId) => api.delete(`/label-studio/labels/${labelId}`),
+  // Render + store a PNG of one label
+  exportPng: (labelId) => api.post(`/label-studio/labels/${labelId}/export`),
+  // The SERVER draws the preview, so what you see is exactly what prints
+  preview: (spec) =>
+    api.post('/label-studio/preview', { spec }, { responseType: 'blob' }),
+  // Printable US Letter PDF of many labels → downloads straight to the browser
+  printSheet: async (labelIds, size = null) => {
+    const res = await api.post('/label-studio/sheet',
+      { label_ids: labelIds, size }, { responseType: 'blob' })
+    const url = URL.createObjectURL(res.data)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = 'liquoriq-shelf-labels.pdf'
+    a.click()
+    URL.revokeObjectURL(url)
+  },
 }
 
 export default api
