@@ -13,7 +13,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.label_design import LabelDesign
 from app.models.normalized_sale import NormalizedSale
-from app.services.shelf_label import blank_label, label_summary, validate_label
+from app.services.shelf_label import (
+    apply_template as merge_template,
+    as_template,
+    blank_label,
+    label_summary,
+    validate_label,
+)
 from app.services.shelf_label_renderer import render_label, render_sheet
 from app.services.storage_service import save_image
 
@@ -21,13 +27,50 @@ logger = logging.getLogger(__name__)
 
 
 async def list_labels(store_id: uuid.UUID, db: AsyncSession) -> list[LabelDesign]:
-    """All of this store's saved labels, most recently edited first."""
+    """This store's saved labels (not templates), most recently edited first."""
     result = await db.execute(
         select(LabelDesign)
-        .where(LabelDesign.store_id == store_id)
+        .where(LabelDesign.store_id == store_id, LabelDesign.is_template.is_(False))
         .order_by(LabelDesign.updated_at.desc())
     )
     return list(result.scalars().all())
+
+
+async def list_templates(store_id: uuid.UUID, db: AsyncSession) -> list[LabelDesign]:
+    """Saved STYLES, reusable across products."""
+    result = await db.execute(
+        select(LabelDesign)
+        .where(LabelDesign.store_id == store_id, LabelDesign.is_template.is_(True))
+        .order_by(LabelDesign.updated_at.desc())
+    )
+    return list(result.scalars().all())
+
+
+async def save_as_template(
+    store_id: uuid.UUID, db: AsyncSession, spec: dict, name: str = ""
+) -> LabelDesign:
+    """Keep the LOOK, drop the product. That's what makes it reusable."""
+    template = as_template(spec, name)
+    row = LabelDesign(
+        store_id=store_id,
+        name=template.get("template_name") or "Untitled style",
+        base_image_url=None,
+        design_json=template,
+        is_template=True,
+    )
+    db.add(row)
+    await db.commit()
+    await db.refresh(row)
+    logger.info("Label template saved: id=%s name=%s", row.id, row.name)
+    return row
+
+
+async def apply_template_to(
+    template_id: uuid.UUID, store_id: uuid.UUID, spec: dict, db: AsyncSession
+) -> dict:
+    """Return the caller's CONTENT rendered in the template's LOOK."""
+    template = await get_label(template_id, store_id, db)
+    return merge_template(template.design_json, spec)
 
 
 async def get_label(label_id: uuid.UUID, store_id: uuid.UUID, db: AsyncSession) -> LabelDesign:
@@ -104,7 +147,7 @@ async def sheet_for_labels(
             LabelDesign.id.in_(label_ids), LabelDesign.store_id == store_id
         )
     )
-    rows = list(result.scalars().all())
+    rows = [r for r in result.scalars().all() if not r.is_template]
     if not rows:
         raise ValueError("None of those labels were found.")
 

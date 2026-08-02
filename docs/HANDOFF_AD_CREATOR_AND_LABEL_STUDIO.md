@@ -2,7 +2,7 @@
 LiquorIQ — MODULE SPLIT: AI AD CREATOR + LABEL STUDIO
 Feature handoff (supersedes docs/HANDOFF_PROFESSIONAL_CREATIVE_EDITOR.md)
 ═══════════════════════════════════════════════
-Alembic head: **d1a58b04e7c3** · Tests: **132 passing** (cd backend && pytest -q)
+Alembic head: **e7c93f2b1a06** · Tests: **150 passing** (cd backend && pytest -q)
 Frontend deps: none added (react-konva/konva were removed — Label Studio renders
 server-side now)
 
@@ -136,15 +136,28 @@ RESPONSIBILITY: SHELF LABELS — the small printed card a store clips to the she
 edge: bottle name, rating, price. No product photo, no ad image. It never calls
 the AI and shares nothing with module 1.
 
+A LABEL IS A LIST OF POSITIONED ELEMENTS (text, price, art, starburst, banner,
+line). Everything can be dragged, resized, recoloured, rotated, duplicated or
+deleted, and any number of art pieces can be added. Positions are RELATIVE
+(0..1 of the card), so a label designed at 4×3″ still works at 5×7″.
+
 TWO DESIGN DECISIONS:
- 1. STRUCTURED FIELDS, NOT A CANVAS. The owner fills in fields and we lay the
-    card out. A good template produces a professional label every time; dragging
-    text boxes around produces something that looks homemade. (This replaced an
-    earlier drag-and-drop overlay editor — react-konva is now gone entirely,
-    which also removed ~310KB from the bundle.)
- 2. THE SERVER DRAWS THE PREVIEW. POST /label-studio/preview returns a PNG that
-    the editor shows directly, so there is no second layout engine in the browser
-    to drift out of sync — the preview is pixel-identical to what prints.
+ 1. STYLES ARE STARTING POINTS, NOT CAGES. An earlier version laid everything
+    out for you — tidy, but the owner had no freedom ("I should be able to move
+    the text and art and price"). Style presets now GENERATE a good set of
+    elements; nothing is locked afterwards. POST /label-studio/from-style is
+    that "start me off" path.
+ 2. THE SERVER DRAWS THE PREVIEW **AND REPORTS THE BOXES**. POST
+    /label-studio/preview returns a scaled PNG plus each element's box in
+    relative units. The browser places its drag handles from those boxes, so the
+    hit areas line up exactly with the print. One renderer, one geometry — no
+    second layout engine in the browser to drift out of sync. (react-konva is
+    still gone; the drag surface is plain absolutely-positioned divs.)
+
+ART CATALOGUE (11, all drawn with Pillow — emoji are impossible, the print fonts
+have no emoji glyphs): bottles · bottle · barrel · grapes · wineglass · martini ·
+beer · star · laurel · flourish · snowflake. Each declares an `aspect` so the
+renderer can derive height from the dragged width.
 
 DATA MODEL: label_designs (c9f42a17d3e5, reshaped by d1a58b04e7c3)
   store_id (CASCADE) · creative_id (SET NULL, optional provenance) · name ·
@@ -153,28 +166,43 @@ DATA MODEL: label_designs (c9f42a17d3e5, reshaped by d1a58b04e7c3)
     {size, theme, icon, product_name, price, was_price, tagline,
      details[≤3], rating:{kind,value,source}, show_border}
 
-SIZES (300 DPI so they print sharp): small 3.5×2″ (10/page) · medium 4×3″ (3/page)
-  · tall 3×5″ (4/page) · large 5×7″. THEMES: classic cream · bold red · premium
-  black & gold · chalkboard · minimal white.
+MODELLED ON THE STORE'S OWN CANVA LABELS (the owner sent photos of real ones).
+  The house style is NOT what a designer would guess:
+    · SERIF type, not sans — traditional, price-list looking. DejaVu Serif and
+      Liberation Serif are now bundled alongside DejaVu Sans (all freely
+      licensed) because the deploy container has no system fonts.
+    · Black on white paper. Colour is used sparingly: a red sale price, a red
+      starburst, a red banner.
+    · The bottle SIZE ("750ML") tucked in a corner.
+    · "REGULAR: $36.99" and "SAVE $4 !" spelled out under the sale price.
+    · Small bottle/barrel clip-art in the bottom corners.
 
-RATING: stars (0–5, snapped to halves, drawn as real polygons with true half-fill)
-  or points (50–100, "92 PTS" badge) — plus a free-text source ("Vivino",
-  "Whisky Advocate"). Both were requested; the owner picks per label.
+THREE STYLES, one per real label they print:
+  classic      — name on top, starburst badge, huge price, REGULAR + SAVE
+                 (their Woodford tag)
+  price_first  — big red price on top, name below, red banner at the foot
+                 (their Traveller tag)
+  deal_bookend — vertical D-E-A-L columns down both edges, content centred,
+                 store name at the foot (their Monte Alto tag)
+  style_fields() tells the UI which optional fields each style uses, so the form
+  stays short instead of showing every control for every style.
 
-ICONS ARE VECTOR ART, NOT EMOJI — and this is not a shortcut. Our bundled DejaVu
-  print fonts contain no emoji glyphs, so 🍾 renders as an empty tofu box on
-  paper (verified: mask size 24×35 = .notdef). Bottle, wine glass, rocks glass,
-  cocktail and barrel are drawn with Pillow primitives, each with its own aspect
-  ratio. The picker still shows the emoji as a recognisable hint.
+"SAVE $4 !" IS COMPUTED, not typed — sl.savings() parses both prices and returns
+  "" unless there is a genuine saving. fmt_money() drops pointless cents ($4, not
+  $4.00) to match how they write it. This is small but it is exactly the kind of
+  arithmetic worth doing for a busy owner.
 
-LAYOUT ENGINE (shelf_label_renderer.py) — measure, then place:
-  The price is the point of a shelf label, so it is sized and bottom-anchored
-  FIRST (cards then line up along a shelf). Everything else gets the remaining
-  budget, and the product name auto-shrinks to fit both width AND height. If a
-  card is still over-full, a 5-step compaction ladder sheds detail in priority
-  order — shrink name → shrink stars/details → shrink icon → drop source → drop
-  icon. Name and price always survive. Truncated names get a visible "…" rather
-  than silently renaming the product.
+SAVED STYLES (templates): as_template() keeps the LOOK and blanks the product
+  fields; apply_template() puts new content into that look. A template is just a
+  LabelDesign row with is_template=true (migration e7c93f2b1a06) — no second
+  table. NOTE: a template necessarily stores show_regular/show_save as false
+  (it has no prices), so apply_template RE-ENABLES them when the incoming
+  content has a regular price. A test covers this; without it, applying a style
+  silently hid the SAVE line.
+
+SIZES (300 DPI): small 3.5×2″ · medium 4×3″ · wide 5×3″ · large 5×7″.
+FONTS: serif (DejaVu, default) · serif_alt (Liberation/Times) · sans.
+ACCENTS: sale red · all black · green · navy.  ART: bottles · barrel · both · grapes.
 
 PRINT SHEET: select any saved labels → US Letter PDF at 300 DPI, auto-paginated,
   with light grey cut guides. All labels on a sheet share one size so the grid
@@ -197,7 +225,11 @@ FILES (module 2):
   DELETED: services/label_studio.py (badge templates), pages/labelstudio/* (konva)
 
 ROUTES (all store-scoped):
-  GET    /label-studio/options            — sizes, themes, icons, rating scales
+  GET    /label-studio/templates          — saved styles
+  POST   /label-studio/templates          — save the current look as a style
+  POST   /label-studio/templates/{id}/apply — put your product in that style
+  DELETE /label-studio/templates/{id}
+  GET    /label-studio/options            — styles, sizes, fonts, accents, art
   GET    /label-studio/products           — POS prefill
   POST   /label-studio/preview            — live PNG of an unsaved spec
   GET    /label-studio/labels             — saved labels

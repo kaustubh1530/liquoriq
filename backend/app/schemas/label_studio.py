@@ -17,12 +17,23 @@ class SheetIn(BaseModel):
     size: str | None = Field(default=None, description="Override; defaults to the first label's size")
 
 
+class TemplateIn(BaseModel):
+    spec: dict = Field(default_factory=dict)
+    name: str = Field(default="", max_length=40)
+
+
+class ApplyTemplateIn(BaseModel):
+    """Put this label's content into the chosen template's look."""
+    spec: dict = Field(default_factory=dict)
+
+
 class LabelOut(BaseModel):
     id: uuid.UUID
     store_id: uuid.UUID
     name: str
     design_json: dict
     final_image_url: str | None = None
+    is_template: bool = False
     created_at: datetime
     updated_at: datetime
 

@@ -1,70 +1,75 @@
 """
 services/shelf_label_renderer.py — MODULE 2: LABEL STUDIO (rendering)
 
-Draws a shelf label at 300 DPI with Pillow, and lays many of them onto a US
-Letter sheet for printing. Same philosophy as the ad text layer: every glyph is
-drawn by us, so the price is exactly what the owner typed and nothing is ever
-cropped or misspelled.
+Draws a shelf label at 300 DPI with Pillow and lays many onto a US Letter sheet.
 
-Label anatomy (vertical rhythm, centred):
+The label is a list of positioned elements, so drawing is one loop. Crucially,
+_render also COLLECTS THE BOX it drew each element into and hands those back:
+the browser places its drag handles from those boxes, which is what keeps the
+editor's hit areas exactly aligned with the print. One renderer, one geometry —
+no second layout engine in the browser to drift out of sync.
 
-    ┌───────────────────────────┐
-    │      ▓ STAFF PICK ▓       │  tagline banner (optional)
-    │                           │
-    │         ╭───╮             │  vector icon (optional)
-    │  BUFFALO TRACE BOURBON    │  product name — auto-fit, ≤3 lines
-    │      ★★★★☆  Vivino        │  rating: stars or a points badge
-    │   90 proof · 750 ML       │  details (optional)
-    │                           │
-    │        $27.99             │  price — the biggest thing on the card
-    │        was $32.99         │  strikethrough (optional)
-    └───────────────────────────┘
-
-Emoji are impossible here (DejaVu has no emoji glyphs — 🍾 prints as a tofu
-box), so the icons are drawn as vector art instead.
+The house look is copied from the store's own Canva tags: serif type, black on
+white, a red sale price, a starburst, "REGULAR / SAVE" spelled out, and small
+bottle/barrel clip-art.
 """
 
 import asyncio
 import logging
+import math
 from io import BytesIO
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
 
-from app.services.shelf_label import ICONS, LABEL_SIZES, THEMES, size_pixels, validate_label
+from app.services.shelf_label import ACCENTS, ART, LABEL_SIZES, size_pixels, validate_label
 
 logger = logging.getLogger(__name__)
 
 _FONT_DIR = Path(__file__).resolve().parent.parent / "assets" / "fonts"
-_BOLD = str(_FONT_DIR / "DejaVuSans-Bold.ttf")
-_REG = str(_FONT_DIR / "DejaVuSans.ttf")
 
-# US Letter at 300 DPI
+_FAMILIES = {
+    "serif":     (_FONT_DIR / "DejaVuSerif-Bold.ttf",     _FONT_DIR / "DejaVuSerif.ttf"),
+    "serif_alt": (_FONT_DIR / "LiberationSerif-Bold.ttf", _FONT_DIR / "LiberationSerif-Regular.ttf"),
+    "sans":      (_FONT_DIR / "DejaVuSans-Bold.ttf",      _FONT_DIR / "DejaVuSans.ttf"),
+}
+
+INK = (17, 17, 17)
+PAPER = (255, 255, 255)
+MUTED = (105, 105, 105)
+
 PAGE_W, PAGE_H = 2550, 3300
 PAGE_MARGIN = 150
-CUT_GUIDE = (190, 190, 190)
+CUT_GUIDE = (200, 200, 200)
 
 
-def _hex(color: str) -> tuple[int, int, int]:
-    color = (color or "#000000").lstrip("#")
+def _fonts(family: str):
+    bold, reg = _FAMILIES.get(family) or _FAMILIES["serif"]
+    if not bold.exists():
+        bold, reg = _FAMILIES["sans"]
+    return str(bold), str(reg)
+
+
+def _hex(color: str):
+    color = (color or "#111111").lstrip("#")
+    if len(color) == 3:
+        color = "".join(c * 2 for c in color)
     return tuple(int(color[i:i + 2], 16) for i in (0, 2, 4))
 
 
-def _fit(draw, text, path, max_w, start, min_size=10):
-    """Largest font size at which `text` fits `max_w`. Text is never cropped."""
-    size = start
-    while size > min_size:
-        font = ImageFont.truetype(path, size)
-        if draw.textlength(text, font=font) <= max_w:
-            return font
-        size -= 2
-    return ImageFont.truetype(path, min_size)
+def _resolve_color(slot: str, accent_hex: str):
+    if slot == "accent":
+        return _hex(accent_hex)
+    if slot == "paper":
+        return PAPER
+    if slot == "muted":
+        return MUTED
+    if isinstance(slot, str) and slot.startswith("#"):
+        return _hex(slot)
+    return INK
 
 
 def _wrap(draw, text, font, max_w, max_lines):
-    """Greedy wrap. Marks dropped words with an ellipsis rather than silently
-    losing them — a shelf label that quietly renames the product is worse than
-    one that visibly ran out of room."""
     words, lines, cur = text.split(), [], ""
     dropped = False
     for i, w in enumerate(words):
@@ -83,301 +88,281 @@ def _wrap(draw, text, font, max_w, max_lines):
         lines.append(cur)
     elif cur:
         dropped = True
-
-    if lines and dropped:
-        while lines[-1] and draw.textlength(lines[-1] + "…", font=font) > max_w:
-            lines[-1] = lines[-1].rsplit(" ", 1)[0] if " " in lines[-1] else lines[-1][:-1]
-        lines[-1] += "…"
-    if lines and draw.textlength(lines[-1], font=font) > max_w:
+    if lines and (dropped or draw.textlength(lines[-1], font=font) > max_w):
         while lines[-1] and draw.textlength(lines[-1] + "…", font=font) > max_w:
             lines[-1] = lines[-1][:-1]
         lines[-1] += "…"
     return lines
 
 
-def _fit_block(draw, text, path, max_w, max_h, start, max_lines=3, min_size=14):
+def _fit_lines(draw, text, path, start_px, max_w, max_lines):
     """
-    Shrink until the wrapped text fits BOTH the width and the height budget.
-    Fitting height as well as width is what stops a long bottle name from
-    pushing the price off the bottom of the card.
-    Returns (font, lines, block_height).
+    Shrink until every line fits the width and no word is dropped. Checking the
+    width of EVERY line matters: a single long word can't be wrapped away, and
+    without this check it renders at full size and runs off the card.
     """
-    size = start
-    while size > min_size:
-        font = ImageFont.truetype(path, size)
-        lines = _wrap(draw, text, font, max_w, max_lines)
-        step = font.size * 1.14
-        fits_w = all(draw.textlength(ln, font=font) <= max_w for ln in lines)
-        if fits_w and len(lines) * step <= max_h:
-            return font, lines, int(len(lines) * step)
+    size = max(int(start_px), 9)
+    while size > 8:
+        f = ImageFont.truetype(path, size)
+        lines = _wrap(draw, text, f, max_w, max_lines)
+        complete = not (lines and lines[-1].endswith("…"))
+        fits = all(draw.textlength(l, font=f) <= max_w for l in lines)
+        if complete and fits:
+            return f, lines
         size -= 2
-    font = ImageFont.truetype(path, min_size)
-    lines = _wrap(draw, text, font, max_w, max_lines)
-    return font, lines, int(len(lines) * font.size * 1.14)
+    f = ImageFont.truetype(path, 8)
+    return f, _wrap(draw, text, f, max_w, max_lines)
 
 
-def _center(draw, text, font, cx, y, fill):
-    draw.text((cx - draw.textlength(text, font=font) / 2, y), text, font=font, fill=fill)
+# ── Clip-art (drawn, never emoji — the print fonts have no emoji glyphs) ──────
+
+def _a_bottle(d, x, y, w, h, c):
+    d.rounded_rectangle([x + w * 0.28, y, x + w * 0.72, y + h * 0.11], radius=w * 0.08, fill=c)
+    d.rectangle([x + w * 0.34, y + h * 0.08, x + w * 0.66, y + h * 0.40], fill=c)
+    d.rounded_rectangle([x, y + h * 0.34, x + w, y + h], radius=w * 0.26, fill=c)
 
 
-# ── Vector icons (drawn, not emoji) ───────────────────────────────────────────
-
-def _icon_bottle(d, x, y, w, h, color):
-    """Long neck, rounded shoulders — reads as a spirits bottle at small sizes."""
-    neck_w = w * 0.34
-    cap_w = w * 0.44
-    d.rounded_rectangle([x + (w - cap_w) / 2, y, x + (w + cap_w) / 2, y + h * 0.10],
-                        radius=w * 0.06, fill=color)
-    d.rectangle([x + (w - neck_w) / 2, y + h * 0.07, x + (w + neck_w) / 2, y + h * 0.42],
-                fill=color)
-    d.rounded_rectangle([x, y + h * 0.36, x + w, y + h], radius=w * 0.26, fill=color)
-
-
-def _icon_wine(d, x, y, w, h, color):
-    bowl_h = h * 0.52
-    d.pieslice([x, y - bowl_h * 0.55, x + w, y + bowl_h], start=0, end=180, fill=color)
-    d.rectangle([x + w * 0.43, y + bowl_h * 0.85, x + w * 0.57, y + h * 0.88], fill=color)
-    d.rounded_rectangle([x + w * 0.14, y + h * 0.88, x + w * 0.86, y + h],
-                        radius=h * 0.04, fill=color)
+def _a_bottles(d, x, y, w, h, c):
+    bw = w * 0.19
+    for bx, bh in ((0.02, 0.74), (0.26, 0.94), (0.50, 0.64)):
+        left, top = x + w * bx, y + h * (1 - bh)
+        d.rectangle([left + bw * 0.34, top, left + bw * 0.66, top + h * bh * 0.32], fill=c)
+        d.rounded_rectangle([left, top + h * bh * 0.26, left + bw, y + h], radius=bw * 0.24, fill=c)
+    gx, gw = x + w * 0.74, w * 0.24
+    d.polygon([(gx, y + h * 0.30), (gx + gw, y + h * 0.30), (gx + gw * 0.5, y + h * 0.70)], fill=c)
+    d.rectangle([gx + gw * 0.44, y + h * 0.66, gx + gw * 0.56, y + h * 0.92], fill=c)
+    d.rectangle([gx + gw * 0.22, y + h * 0.92, gx + gw * 0.78, y + h], fill=c)
 
 
-def _icon_tumbler(d, x, y, w, h, color):
-    """Rocks glass — a gentle taper, plus a highlight so it reads as glass."""
-    d.polygon([(x + w * 0.06, y), (x + w * 0.94, y),
-               (x + w * 0.82, y + h), (x + w * 0.18, y + h)], fill=color)
-    d.polygon([(x + w * 0.18, y + h * 0.14), (x + w * 0.30, y + h * 0.14),
-               (x + w * 0.27, y + h * 0.80), (x + w * 0.17, y + h * 0.80)],
-              fill=(255, 255, 255, 70))
+def _a_barrel(d, x, y, w, h, c):
+    d.rounded_rectangle([x, y, x + w, y + h], radius=w * 0.34, fill=c)
+    hoop = max(2, int(h * 0.055))
+    for fy in (0.26, 0.62):
+        d.rectangle([x - 1, y + h * fy, x + w + 1, y + h * fy + hoop], fill=PAPER)
+    d.ellipse([x + w * 0.14, y - h * 0.03, x + w * 0.86, y + h * 0.16],
+              outline=PAPER, width=max(2, int(w * 0.07)))
 
 
-def _icon_cocktail(d, x, y, w, h, color):
-    d.polygon([(x, y), (x + w, y), (x + w * 0.5, y + h * 0.56)], fill=color)
-    d.rectangle([x + w * 0.44, y + h * 0.52, x + w * 0.56, y + h * 0.88], fill=color)
-    d.rounded_rectangle([x + w * 0.16, y + h * 0.88, x + w * 0.84, y + h],
-                        radius=h * 0.04, fill=color)
+def _a_grapes(d, x, y, w, h, c):
+    r = w * 0.15
+    for row, count in enumerate((3, 2, 1)):
+        for i in range(count):
+            cx = x + w * 0.5 + (i - (count - 1) / 2) * r * 2.05
+            cy = y + h * 0.34 + row * r * 1.7
+            d.ellipse([cx - r, cy - r, cx + r, cy + r], fill=c)
+    d.line([(x + w * 0.5, y), (x + w * 0.5, y + h * 0.22)], fill=c, width=max(2, int(w * 0.06)))
 
 
-def _icon_barrel(d, x, y, w, h, color):
-    d.rounded_rectangle([x, y, x + w, y + h], radius=w * 0.30, fill=color)
-    band = max(3, int(h * 0.06))
-    for fy in (0.26, 0.66):
-        d.rectangle([x, y + h * fy, x + w, y + h * fy + band], fill=(255, 255, 255, 80))
+def _a_wineglass(d, x, y, w, h, c):
+    d.pieslice([x, y - h * 0.26, x + w, y + h * 0.52], start=0, end=180, fill=c)
+    d.rectangle([x + w * 0.43, y + h * 0.44, x + w * 0.57, y + h * 0.88], fill=c)
+    d.rounded_rectangle([x + w * 0.14, y + h * 0.88, x + w * 0.86, y + h], radius=h * 0.04, fill=c)
 
 
-_ICON_FNS = {
-    "bottle": _icon_bottle, "wine": _icon_wine, "tumbler": _icon_tumbler,
-    "cocktail": _icon_cocktail, "barrel": _icon_barrel,
-}
-
-# Width ÷ height per icon. A bottle is tall and narrow; a rocks glass is nearly
-# square. One shared aspect made the tumbler render as a sliver.
-_ICON_ASPECT = {
-    "bottle": 0.42, "wine": 0.72, "tumbler": 0.80, "cocktail": 0.88, "barrel": 0.78,
-}
+def _a_martini(d, x, y, w, h, c):
+    d.polygon([(x, y), (x + w, y), (x + w * 0.5, y + h * 0.56)], fill=c)
+    d.rectangle([x + w * 0.44, y + h * 0.52, x + w * 0.56, y + h * 0.88], fill=c)
+    d.rounded_rectangle([x + w * 0.16, y + h * 0.88, x + w * 0.84, y + h], radius=h * 0.04, fill=c)
 
 
-def _draw_star(base, cx, cy, r, fill, fraction=1.0):
-    """A five-point star; fraction<1 fills only the left part (half stars)."""
-    import math
+def _a_beer(d, x, y, w, h, c):
+    d.rounded_rectangle([x, y + h * 0.10, x + w * 0.72, y + h], radius=w * 0.09, fill=c)
+    d.arc([x + w * 0.60, y + h * 0.28, x + w, y + h * 0.78], start=270, end=90,
+          fill=c, width=max(3, int(w * 0.10)))
+    d.ellipse([x - w * 0.02, y, x + w * 0.34, y + h * 0.22], fill=c)
+    d.ellipse([x + w * 0.30, y - h * 0.03, x + w * 0.74, y + h * 0.20], fill=c)
+
+
+def _a_star(d, x, y, w, h, c):
+    cx, cy, r = x + w / 2, y + h / 2, min(w, h) / 2
     pts = []
     for i in range(10):
         rad = r if i % 2 == 0 else r * 0.45
         a = math.pi / 5 * i - math.pi / 2
         pts.append((cx + math.cos(a) * rad, cy + math.sin(a) * rad))
-
-    layer = Image.new("RGBA", base.size, (0, 0, 0, 0))
-    ImageDraw.Draw(layer).polygon(pts, fill=fill)
-    if fraction < 1.0:
-        mask = Image.new("L", base.size, 0)
-        ImageDraw.Draw(mask).rectangle(
-            [cx - r, cy - r, cx - r + (2 * r) * fraction, cy + r], fill=255
-        )
-        layer.putalpha(Image.composite(layer.getchannel("A"),
-                                       Image.new("L", base.size, 0), mask))
-    base.alpha_composite(layer)
+    d.polygon(pts, fill=c)
 
 
-def _render(spec: dict) -> bytes:
-    label = validate_label(spec)
-    theme = THEMES[label["theme"]]
-    W, H = size_pixels(label["size"])
+def _a_laurel(d, x, y, w, h, c):
+    """Two leafy sprigs curving up into a wreath — a classic award flourish."""
+    cx, base = x + w / 2, y + h * 0.94
+    lw = max(2, int(h * 0.055))
+    for side in (-1, 1):
+        # Stem: a shallow arc from the base up and outwards
+        prev = (cx, base)
+        for i in range(1, 9):
+            t = i / 8
+            px = cx + side * w * 0.42 * math.sin(t * 1.35)
+            py = base - h * 0.80 * t
+            d.line([prev, (px, py)], fill=c, width=lw)
+            prev = (px, py)
+            if i % 2 == 0:                      # a leaf every other step
+                r = h * (0.15 - 0.07 * t)
+                d.ellipse([px - r * 0.85, py - r * 0.55, px + r * 0.85, py + r * 0.55], fill=c)
 
-    bg, ink = _hex(theme["bg"]), _hex(theme["ink"])
-    muted, accent = _hex(theme["muted"]), _hex(theme["accent"])
-    accent_ink, border = _hex(theme["accent_ink"]), _hex(theme["border"])
 
-    img = Image.new("RGBA", (W, H), bg + (255,))
+def _a_flourish(d, x, y, w, h, c):
+    lw = max(2, int(h * 0.20))
+    d.line([(x + w * 0.10, y + h * 0.5), (x + w * 0.90, y + h * 0.5)], fill=c, width=lw)
+    r = h * 0.42
+    d.ellipse([x + w * 0.45, y + h * 0.5 - r, x + w * 0.55, y + h * 0.5 + r], fill=c)
+    for fx in (0.06, 0.94):
+        d.ellipse([x + w * fx - r * 0.3, y + h * 0.5 - r * 0.3,
+                   x + w * fx + r * 0.3, y + h * 0.5 + r * 0.3], fill=c)
+
+
+def _a_snowflake(d, x, y, w, h, c):
+    cx, cy, r = x + w / 2, y + h / 2, min(w, h) / 2
+    lw = max(2, int(r * 0.14))
+    for i in range(6):
+        a = math.pi / 3 * i
+        ex, ey = cx + math.cos(a) * r, cy + math.sin(a) * r
+        d.line([(cx, cy), (ex, ey)], fill=c, width=lw)
+        for t in (0.55, 0.80):
+            bx, by = cx + math.cos(a) * r * t, cy + math.sin(a) * r * t
+            for sign in (-1, 1):
+                b = a + sign * math.pi / 4
+                d.line([(bx, by), (bx + math.cos(b) * r * 0.22, by + math.sin(b) * r * 0.22)],
+                       fill=c, width=max(1, lw // 2))
+
+
+_ART_FNS = {
+    "bottle": _a_bottle, "bottles": _a_bottles, "barrel": _a_barrel,
+    "grapes": _a_grapes, "wineglass": _a_wineglass, "martini": _a_martini,
+    "beer": _a_beer, "star": _a_star, "laurel": _a_laurel,
+    "flourish": _a_flourish, "snowflake": _a_snowflake,
+}
+
+
+def _starburst(d, cx, cy, r, fill, points=12, inner=0.72):
+    pts = []
+    for i in range(points * 2):
+        rad = r if i % 2 == 0 else r * inner
+        a = math.pi / points * i - math.pi / 2
+        pts.append((cx + math.cos(a) * rad, cy + math.sin(a) * rad))
+    d.polygon(pts, fill=fill)
+
+
+# ── Element drawing ───────────────────────────────────────────────────────────
+
+def _draw_element(img, d, el, W, H, bold, reg, accent_hex) -> tuple:
+    """Draw one element; return the (x, y, w, h) box it occupied, in pixels."""
+    x, y = el["x"] * W, el["y"] * H
+    w = el["w"] * W
+    color = _resolve_color(el["color"], accent_hex)
+    kind = el["kind"]
+
+    if kind == "art":
+        aspect = ART.get(el["art"], {}).get("aspect", 1.0)
+        h = w / max(aspect, 0.05)
+        fn = _ART_FNS.get(el["art"])
+        if fn:
+            layer = Image.new("RGBA", (max(2, int(w)) + 4, max(2, int(h)) + 4), (0, 0, 0, 0))
+            fn(ImageDraw.Draw(layer), 2, 2, w, h, color + (255,))
+            if el["rotation"]:
+                layer = layer.rotate(-el["rotation"], expand=True, resample=Image.BICUBIC)
+            img.paste(layer, (int(x), int(y)), layer)
+        return (x, y, w, h)
+
+    if kind == "line":
+        thick = max(2, int(el["size"] * H))
+        d.rectangle([x, y, x + w, y + thick], fill=color)
+        return (x, y, w, thick)
+
+    text = el["text"]
+    if not text:
+        return (x, y, w, el["size"] * H)
+
+    path = bold if el["bold"] else reg
+    start_px = el["size"] * H
+
+    if kind == "starburst":
+        r = w / 2
+        _starburst(d, x + r, y + r, r, _resolve_color("accent", accent_hex))
+        f, lines = _fit_lines(d, text, path, start_px, w * 0.86, 1)
+        d.text((x + r - d.textlength(lines[0], font=f) / 2, y + r - f.size * 0.62),
+               lines[0], font=f, fill=color)
+        return (x, y, w, w)
+
+    if kind == "banner":
+        # A filled column/strip with the text stacked down it (the DEAL bookends)
+        bh = H
+        d.rectangle([x, y, x + w, y + bh], fill=_resolve_color("accent", accent_hex))
+        f = ImageFont.truetype(path, max(9, int(el["size"] * H)))
+        letters = list(text)
+        step = bh / (len(letters) + 1) if letters else bh
+        for i, ch in enumerate(letters):
+            d.text((x + w / 2 - d.textlength(ch, font=f) / 2,
+                    step * (i + 1) - f.size * 0.6), ch, font=f, fill=color)
+        return (x, y, w, bh)
+
+    # text / price
+    f, lines = _fit_lines(d, text, path, start_px, w, el["lines"])
+    step = f.size * 1.12
+    total_h = step * len(lines)
+
+    if el["rotation"]:
+        pad = int(max(w, total_h))
+        layer = Image.new("RGBA", (int(w) + pad, int(total_h) + pad), (0, 0, 0, 0))
+        ld = ImageDraw.Draw(layer)
+        for i, line in enumerate(lines):
+            lx = {"left": 0, "center": (w - ld.textlength(line, font=f)) / 2,
+                  "right": w - ld.textlength(line, font=f)}[el["align"]]
+            ld.text((lx, i * step), line, font=f, fill=color + (255,))
+        layer = layer.rotate(-el["rotation"], expand=True, resample=Image.BICUBIC)
+        img.paste(layer, (int(x), int(y)), layer)
+    else:
+        for i, line in enumerate(lines):
+            lx = {"left": x, "center": x + (w - d.textlength(line, font=f)) / 2,
+                  "right": x + w - d.textlength(line, font=f)}[el["align"]]
+            d.text((lx, y + i * step), line, font=f, fill=color)
+
+    return (x, y, w, total_h)
+
+
+def _render(spec: dict, scale: float = 1.0, with_boxes: bool = False):
+    """
+    Draw the label. When with_boxes is set, also return each element's box in
+    RELATIVE units — the browser positions its drag handles from these, which is
+    what keeps the editor aligned with the print.
+    """
+    L = validate_label(spec)
+    W, H = size_pixels(L["size"])
+    if scale != 1.0:
+        W, H = max(80, int(W * scale)), max(80, int(H * scale))
+
+    bold, reg = _fonts(L["font"])
+    accent_hex = ACCENTS.get(L["accent"], ACCENTS["red"])["hex"]
+
+    img = Image.new("RGB", (W, H), PAPER)
     d = ImageDraw.Draw(img)
 
-    margin = int(W * 0.07)
-    inner_w = W - margin * 2
-    cx = W / 2
+    boxes = []
+    for el in L["elements"]:
+        if not el["visible"]:
+            continue
+        try:
+            bx, by, bw, bh = _draw_element(img, d, el, W, H, bold, reg, accent_hex)
+        except Exception:  # noqa: BLE001 — one bad element must not kill the label
+            logger.warning("element failed to draw: %s", el.get("id"), exc_info=True)
+            continue
+        if with_boxes:
+            boxes.append({"id": el["id"], "kind": el["kind"],
+                          "x": bx / W, "y": by / H,
+                          "w": bw / W, "h": max(bh, H * 0.03) / H})
 
-    if label["show_border"]:
-        inset = max(3, int(W * 0.012))
-        d.rounded_rectangle([inset, inset, W - inset, H - inset],
-                            radius=int(W * 0.035), outline=border,
-                            width=max(2, int(W * 0.005)))
-
-    # ═══ PASS 1 — MEASURE ════════════════════════════════════════════════════
-    # The price is the point of a shelf label, so it gets its space FIRST and is
-    # anchored to the bottom (cards then line up neatly along a shelf). Whatever
-    # is left is the budget for everything above, and the product name shrinks to
-    # fit it. That ordering is why nothing can ever overflow the card.
-    price_h = 0
-    pf = wf = None
-    if label["price"]:
-        pf = _fit(d, label["price"], _BOLD, inner_w, int(H * 0.19))
-        price_h = int(pf.size * 1.16)
-        if label["was_price"]:
-            wf = ImageFont.truetype(_REG, int(H * 0.040))
-            price_h += int(wf.size * 1.75)
-
-    top_h = H - margin * 2 - price_h - (int(H * 0.02) if price_h else 0)
-
-    rating = label["rating"]
-    detail_text = "  ·  ".join(label["details"]) if label["details"] else ""
-
-    # A busy card (tagline + icon + long name + rating + details) can still ask
-    # for more room than exists. Rather than let anything collide with the price,
-    # give up detail in a fixed priority order — a shelf label must show the name
-    # and price above all else. Each pass sheds a little more.
-    tag_f = tag_bh = icon_h = icon_w = rate_h = src_h = det_h = 0
-    rate_f = src_f = det_f = None
-    name_f, name_lines, name_h = None, [], 0
-
-    # Shrink the NAME before shedding elements — a slightly smaller name still
-    # reads on a shelf, whereas losing the icon the owner deliberately chose is
-    # a visible feature regression. The icon is the last thing to go.
-    for step in range(5):
-        name_floor = (0.085, 0.066, 0.052, 0.044, 0.038)[step]
-        star_scale = (1.0, 1.0, 0.90, 0.82, 0.72)[step]
-        det_scale = (1.0, 1.0, 0.94, 0.86, 0.80)[step]
-        icon_scale = (1.0, 1.0, 0.82, 0.62, 0.0)[step]
-        show_src = (True, True, True, False, False)[step]
-
-        tag_f = tag_bh = 0
-        if label["tagline"]:
-            tag_f = _fit(d, label["tagline"], _BOLD, inner_w * 0.82, int(H * 0.060))
-            tag_bh = int(tag_f.size + H * 0.036) + int(H * 0.026)
-
-        icon_h = icon_w = 0
-        if icon_scale and label["icon"] in _ICON_FNS:
-            icon_h = int(H * 0.130 * icon_scale)
-            icon_w = int(icon_h * _ICON_ASPECT.get(label["icon"], 0.7))
-
-        star_r = int(H * 0.032 * star_scale)
-        rate_h = 0
-        rate_f = None
-        if rating["kind"] == "stars" and rating["value"] > 0:
-            rate_h = int(star_r * 2.5)
-        elif rating["kind"] == "points" and rating["value"] > 0:
-            rate_f = _fit(d, f"{int(rating['value'])} PTS", _BOLD,
-                          inner_w * 0.55, int(H * 0.056 * star_scale))
-            rate_h = int(rate_f.size + H * 0.028) + int(H * 0.010)
-
-        src_f = src_h = 0
-        if rate_h and rating["source"] and show_src:
-            src_f = ImageFont.truetype(_REG, int(H * 0.029))
-            src_h = int(src_f.size * 1.55)
-
-        det_f = det_h = 0
-        if detail_text:
-            det_f = _fit(d, detail_text, _REG, inner_w, int(H * 0.038 * det_scale))
-            det_h = int(det_f.size * 1.75)
-
-        gaps = (int(H * 0.022) if icon_h else 0) + (int(H * 0.018) if rate_h else 0)
-        fixed_h = tag_bh + icon_h + rate_h + src_h + det_h + gaps
-
-        name_f, name_lines, name_h = None, [], 0
-        if label["product_name"]:
-            name_f, name_lines, name_h = _fit_block(
-                d, label["product_name"].upper(), _BOLD, inner_w,
-                max(int(H * name_floor), top_h - fixed_h), int(H * 0.105),
-                max_lines=3, min_size=max(12, int(H * name_floor)),
-            )
-            name_h += int(H * 0.016)
-
-        if fixed_h + name_h <= top_h:
-            break
-
-    star_r = int(H * 0.032 * (1.0, 1.0, 0.90, 0.82, 0.72)[min(step, 4)])
-
-    # ═══ PASS 2 — PLACE ══════════════════════════════════════════════════════
-    content_h = fixed_h + name_h
-    y = margin + max(0, (top_h - content_h) // 2)   # optically centred
-
-    if label["tagline"]:
-        pad_x, pad_y = int(W * 0.035), int(H * 0.018)
-        bw = d.textlength(label["tagline"], font=tag_f) + pad_x * 2
-        bh = tag_f.size + pad_y * 2
-        d.rounded_rectangle([cx - bw / 2, y, cx + bw / 2, y + bh], radius=bh / 2, fill=accent)
-        _center(d, label["tagline"], tag_f, cx, y + pad_y - int(tag_f.size * 0.08), accent_ink)
-        y += bh + int(H * 0.026)
-
-    if icon_h:
-        _ICON_FNS[label["icon"]](d, cx - icon_w / 2, y, icon_w, icon_h, accent)
-        y += icon_h + int(H * 0.022)
-
-    if name_lines:
-        step = int(name_f.size * 1.14)
-        for line in name_lines:
-            _center(d, line, name_f, cx, y, ink)
-            y += step
-        y += int(H * 0.016)
-
-    if rating["kind"] == "stars" and rating["value"] > 0:
-        gap = star_r * 2.45
-        sx = cx - (gap * 5) / 2 + star_r
-        for i in range(5):
-            filled = min(max(rating["value"] - i, 0), 1)
-            _draw_star(img, sx + gap * i, y + star_r, star_r, muted + (80,), 1.0)
-            if filled > 0:
-                _draw_star(img, sx + gap * i, y + star_r, star_r, accent + (255,), filled)
-        y += int(star_r * 2.5)
-    elif rating["kind"] == "points" and rating["value"] > 0:
-        text = f"{int(rating['value'])} PTS"
-        pad_x, pad_y = int(W * 0.030), int(H * 0.014)
-        bw = d.textlength(text, font=rate_f) + pad_x * 2
-        bh = rate_f.size + pad_y * 2
-        d.rounded_rectangle([cx - bw / 2, y, cx + bw / 2, y + bh],
-                            radius=int(bh * 0.24), fill=accent)
-        _center(d, text, rate_f, cx, y + pad_y - int(rate_f.size * 0.08), accent_ink)
-        y += bh + int(H * 0.010)
-
-    if src_h:
-        _center(d, rating["source"], src_f, cx, y, muted)
-        y += src_h
-    if rate_h:
-        y += int(H * 0.018)
-
-    if det_h:
-        _center(d, detail_text, det_f, cx, y, muted)
-        y += det_h
-
-    # ── Price, bottom-anchored ──
-    if pf:
-        py = H - margin - price_h
-        _center(d, label["price"], pf, cx, py, accent)
-        py += int(pf.size * 1.16)
-        if wf:
-            was = f"was {label['was_price']}"
-            ww = d.textlength(was, font=wf)
-            _center(d, was, wf, cx, py, muted)
-            ly = py + wf.size * 0.62
-            d.line([(cx - ww / 2, ly), (cx + ww / 2, ly)],
-                   fill=muted, width=max(2, int(H * 0.004)))
+    if L["show_border"]:
+        inset = max(2, int(W * 0.008))
+        d.rectangle([inset, inset, W - inset, H - inset], outline=INK,
+                    width=max(2, int(W * 0.005)))
 
     buf = BytesIO()
-    img.convert("RGB").save(buf, format="PNG", optimize=True)
-    return buf.getvalue()
+    img.save(buf, format="PNG", optimize=True)
+    png = buf.getvalue()
+    return (png, boxes, (W, H)) if with_boxes else png
 
 
 def _render_sheet(specs: list[dict], size_key: str) -> bytes:
-    """
-    Lay labels onto a US Letter page, left-to-right, with light cut guides.
-    All labels on a sheet share one size so the grid is uniform to cut.
-    """
     lw, lh = size_pixels(size_key)
     cols = max(1, (PAGE_W - PAGE_MARGIN * 2) // lw)
     rows = max(1, (PAGE_H - PAGE_MARGIN * 2) // lh)
@@ -389,7 +374,7 @@ def _render_sheet(specs: list[dict], size_key: str) -> bytes:
 
     pages: list[Image.Image] = []
     for start in range(0, max(1, len(specs)), per_page):
-        page = Image.new("RGB", (PAGE_W, PAGE_H), (255, 255, 255))
+        page = Image.new("RGB", (PAGE_W, PAGE_H), PAPER)
         pd = ImageDraw.Draw(page)
         for idx, spec in enumerate(specs[start:start + per_page]):
             r, c = divmod(idx, cols)
@@ -400,18 +385,21 @@ def _render_sheet(specs: list[dict], size_key: str) -> bytes:
         pages.append(page)
 
     buf = BytesIO()
-    pages[0].save(buf, format="PDF", resolution=float(300),
-                  save_all=True, append_images=pages[1:])
+    pages[0].save(buf, format="PDF", resolution=300.0, save_all=True,
+                  append_images=pages[1:])
     return buf.getvalue()
 
 
 async def render_label(spec: dict) -> bytes:
-    """One shelf label as PNG bytes (Pillow is CPU-bound → run off the loop)."""
     return await asyncio.to_thread(_render, spec)
 
 
+async def render_preview(spec: dict, scale: float = 0.42):
+    """Smaller render for the editor, plus the boxes for its drag handles."""
+    return await asyncio.to_thread(_render, spec, scale, True)
+
+
 async def render_sheet(specs: list[dict], size_key: str) -> bytes:
-    """A printable US Letter PDF of many labels, paginated automatically."""
     if not specs:
         raise ValueError("Select at least one label to print.")
     if size_key not in LABEL_SIZES:
@@ -421,13 +409,10 @@ async def render_sheet(specs: list[dict], size_key: str) -> bytes:
 
 
 def labels_per_page(size_key: str) -> int:
-    """How many fit on one sheet — shown in the UI before printing."""
     lw, lh = size_pixels(size_key)
     cols = max(1, (PAGE_W - PAGE_MARGIN * 2) // lw)
     rows = max(1, (PAGE_H - PAGE_MARGIN * 2) // lh)
     return int(cols * rows)
 
 
-# Icon keys the renderer can actually draw (the UI hides any it can't)
-DRAWABLE_ICONS = {"none", *_ICON_FNS.keys()}
-assert DRAWABLE_ICONS <= set(ICONS), "renderer knows an icon the catalogue doesn't"
+assert set(_ART_FNS) == set(ART), "an art piece is advertised but not drawable"

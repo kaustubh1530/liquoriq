@@ -24,43 +24,114 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.models.store import Store
 from app.routes.stores import get_current_store
-from app.schemas.label_studio import LabelIn, LabelOut, ProductSuggestion, SheetIn
+from app.schemas.label_studio import (
+    ApplyTemplateIn,
+    LabelIn,
+    LabelOut,
+    ProductSuggestion,
+    SheetIn,
+    TemplateIn,
+)
 from app.services import label_design_service as svc
 from app.services.shelf_label import (
-    DEFAULT_ICON,
+    ACCENTS,
+    ART,
+    COLORS,
+    CONTENT_FIELDS,
+    DEFAULT_ACCENT,
+    DEFAULT_FONT,
     DEFAULT_SIZE,
-    DEFAULT_THEME,
-    ICONS,
+    DEFAULT_STYLE,
+    ELEMENT_DEFAULTS,
+    ELEMENT_KINDS,
+    FONTS,
     LABEL_SIZES,
-    POINTS_MAX,
-    POINTS_MIN,
-    STARS_MAX,
-    THEMES,
+    STYLE_PRESETS,
     blank_label,
+    build_from_style,
 )
-from app.services.shelf_label_renderer import DRAWABLE_ICONS, labels_per_page, render_label
+from app.services.shelf_label_renderer import labels_per_page, render_label, render_preview
 
 router = APIRouter()
 
 
-@router.get("/options", summary="Sizes, themes and icons the label editor offers")
+@router.get("/options", summary="Styles, sizes, fonts, art and element defaults")
 async def get_options() -> dict:
     return {
-        "sizes": [
-            {**s, "per_page": labels_per_page(k)} for k, s in LABEL_SIZES.items()
-        ],
-        "themes": list(THEMES.values()),
-        # Only advertise icons the renderer can actually draw
-        "icons": [i for k, i in ICONS.items() if k in DRAWABLE_ICONS],
-        "rating": {
-            "kinds": ["none", "stars", "points"],
-            "stars_max": STARS_MAX,
-            "points_min": POINTS_MIN,
-            "points_max": POINTS_MAX,
-        },
-        "defaults": {"size": DEFAULT_SIZE, "theme": DEFAULT_THEME, "icon": DEFAULT_ICON},
+        "styles": [{k: v for k, v in s.items() if k != "build"}
+                   for s in STYLE_PRESETS.values()],
+        "sizes": [{**s, "per_page": labels_per_page(k)} for k, s in LABEL_SIZES.items()],
+        "fonts": list(FONTS.values()),
+        "accents": list(ACCENTS.values()),
+        "art": list(ART.values()),
+        "element_kinds": list(ELEMENT_KINDS),
+        "colors": list(COLORS),
+        "element_defaults": ELEMENT_DEFAULTS,
+        "content_fields": list(CONTENT_FIELDS),
+        "defaults": {"style": DEFAULT_STYLE, "size": DEFAULT_SIZE,
+                     "font": DEFAULT_FONT, "accent": DEFAULT_ACCENT},
         "blank": blank_label(),
     }
+
+
+@router.post("/from-style", summary="Generate a starting layout from a style + your content")
+async def from_style(body: dict) -> dict:
+    """
+    The "start me off" path: pick a style, type the name and price, and get a
+    full set of positioned elements you can then move around freely.
+    """
+    return {"spec": build_from_style(
+        body.get("style") or DEFAULT_STYLE,
+        body.get("content") or {},
+        body.get("base") or {},
+    )}
+
+
+@router.get("/templates", response_model=list[LabelOut],
+            summary="Your saved styles, reusable for any product")
+async def list_templates(
+    current_store: Annotated[Store, Depends(get_current_store)],
+    db: AsyncSession = Depends(get_db),
+):
+    return await svc.list_templates(current_store.id, db)
+
+
+@router.post("/templates", response_model=LabelOut, status_code=status.HTTP_201_CREATED,
+             summary="Save the current look as a reusable style")
+async def create_template(
+    body: TemplateIn,
+    current_store: Annotated[Store, Depends(get_current_store)],
+    db: AsyncSession = Depends(get_db),
+):
+    return await svc.save_as_template(current_store.id, db, body.spec, body.name)
+
+
+@router.post("/templates/{template_id}/apply",
+             summary="Put your product into a saved style")
+async def apply_template(
+    template_id: uuid.UUID,
+    body: ApplyTemplateIn,
+    current_store: Annotated[Store, Depends(get_current_store)],
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    try:
+        return {"spec": await svc.apply_template_to(
+            template_id, current_store.id, body.spec, db)}
+    except ValueError as e:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail=str(e))
+
+
+@router.delete("/templates/{template_id}", status_code=status.HTTP_204_NO_CONTENT,
+               summary="Delete a saved style")
+async def delete_template(
+    template_id: uuid.UUID,
+    current_store: Annotated[Store, Depends(get_current_store)],
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    try:
+        await svc.delete_label(template_id, current_store.id, db)
+    except ValueError as e:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail=str(e))
 
 
 @router.get("/products", response_model=list[ProductSuggestion],
@@ -72,20 +143,24 @@ async def get_products(
     return await svc.product_suggestions(current_store.id, db)
 
 
-@router.post("/preview", summary="Live PNG preview of a label (not saved)",
-             response_class=Response)
+@router.post("/preview", summary="Live preview + element boxes for the drag editor")
 async def preview(
     body: LabelIn,
     current_store: Annotated[Store, Depends(get_current_store)],
-) -> Response:
+) -> dict:
     """
-    The editor previews by asking the SERVER to draw the label, so what the owner
-    sees is pixel-identical to what prints — no second layout engine in the
-    browser to drift out of sync.
+    The SERVER draws the preview, so what the owner sees is exactly what prints —
+    no second layout engine in the browser to drift out of sync. It also returns
+    each element's box in relative units, which is how the editor places its drag
+    handles so they line up perfectly with the drawn label.
     """
-    png = await render_label(body.spec)
-    return Response(content=png, media_type="image/png",
-                    headers={"Cache-Control": "no-store"})
+    import base64
+    png, boxes, (w, h) = await render_preview(body.spec)
+    return {
+        "image": "data:image/png;base64," + base64.b64encode(png).decode(),
+        "boxes": boxes,
+        "canvas": {"width": w, "height": h},
+    }
 
 
 @router.get("/labels", response_model=list[LabelOut], summary="Your saved labels")

@@ -20,7 +20,7 @@ final_image_url is the rendered PNG, written on export.
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, String, func
+from sqlalchemy import Boolean, DateTime, ForeignKey, String, func
 from sqlalchemy.dialects.postgresql import JSON, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -54,6 +54,12 @@ class LabelDesign(Base):
     final_image_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
 
     design_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+
+    # A TEMPLATE is the same row with the product-specific fields blanked: the
+    # owner saves a look once and applies it to any bottle. No second table.
+    is_template: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False

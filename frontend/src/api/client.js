@@ -269,9 +269,15 @@ export const creativeApi = {
 // Promotional badges only. Never calls the AI; only references a base image URL.
 
 export const labelStudioApi = {
-  // Sizes / themes / icons come from the server — one source of truth with the
+  // Styles / sizes / fonts come from the server — one source of truth with the
   // renderer, so the editor can never offer something we can't draw.
   options: () => api.get('/label-studio/options'),
+  // Saved STYLES: set a look up once, reuse it for any bottle
+  templates: () => api.get('/label-studio/templates'),
+  saveTemplate: (spec, name) => api.post('/label-studio/templates', { spec, name }),
+  applyTemplate: (templateId, spec) =>
+    api.post(`/label-studio/templates/${templateId}/apply`, { spec }),
+  deleteTemplate: (templateId) => api.delete(`/label-studio/templates/${templateId}`),
   // Best sellers + latest price from the store's OWN sales data (one-click prefill)
   products: () => api.get('/label-studio/products'),
   list: () => api.get('/label-studio/labels'),
@@ -281,9 +287,12 @@ export const labelStudioApi = {
   remove: (labelId) => api.delete(`/label-studio/labels/${labelId}`),
   // Render + store a PNG of one label
   exportPng: (labelId) => api.post(`/label-studio/labels/${labelId}/export`),
-  // The SERVER draws the preview, so what you see is exactly what prints
-  preview: (spec) =>
-    api.post('/label-studio/preview', { spec }, { responseType: 'blob' }),
+  // The SERVER draws the preview AND returns each element's box, so the drag
+  // handles line up exactly with the printed label.
+  preview: (spec) => api.post('/label-studio/preview', { spec }),
+  // "Start me off": a style + your content → a full set of movable elements
+  fromStyle: (style, content, base) =>
+    api.post('/label-studio/from-style', { style, content, base }),
   // Printable US Letter PDF of many labels → downloads straight to the browser
   printSheet: async (labelIds, size = null) => {
     const res = await api.post('/label-studio/sheet',
