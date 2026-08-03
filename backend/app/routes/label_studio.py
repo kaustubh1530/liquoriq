@@ -41,16 +41,24 @@ from app.services.shelf_label import (
     DEFAULT_ACCENT,
     DEFAULT_FONT,
     DEFAULT_SIZE,
+    DEFAULT_ORIENTATION,
+    DEFAULT_PAGE,
+    DEFAULT_PER_PAGE,
     DEFAULT_STYLE,
     ELEMENT_DEFAULTS,
     ELEMENT_KINDS,
     FONTS,
     LABEL_SIZES,
+    PAGE_SIZES,
+    ORIENTATIONS,
+    SHEET_LAYOUTS,
     STYLE_PRESETS,
     blank_label,
     build_from_style,
+    cell_inches,
+    sheet_grid,
 )
-from app.services.shelf_label_renderer import labels_per_page, render_label, render_preview
+from app.services.shelf_label_renderer import render_label, render_preview
 
 router = APIRouter()
 
@@ -60,7 +68,16 @@ async def get_options() -> dict:
     return {
         "styles": [{k: v for k, v in s.items() if k != "build"}
                    for s in STYLE_PRESETS.values()],
-        "sizes": [{**s, "per_page": labels_per_page(k)} for k, s in LABEL_SIZES.items()],
+        "sizes": list(LABEL_SIZES.values()),
+        "pages": list(PAGE_SIZES.values()),
+        "orientations": list(ORIENTATIONS),
+        "sheet_layouts": [
+            {"per_page": n,
+             "cells": {f"{pg}_{o}": cell_inches(n, pg, o)
+                       for pg in PAGE_SIZES for o in ORIENTATIONS},
+             "grids": {o: list(sheet_grid(n, o)) for o in ORIENTATIONS}}
+            for n in sorted(SHEET_LAYOUTS) if n > 1
+        ],
         "fonts": list(FONTS.values()),
         "accents": list(ACCENTS.values()),
         "art": list(ART.values()),
@@ -69,7 +86,9 @@ async def get_options() -> dict:
         "element_defaults": ELEMENT_DEFAULTS,
         "content_fields": list(CONTENT_FIELDS),
         "defaults": {"style": DEFAULT_STYLE, "size": DEFAULT_SIZE,
-                     "font": DEFAULT_FONT, "accent": DEFAULT_ACCENT},
+                     "font": DEFAULT_FONT, "accent": DEFAULT_ACCENT,
+                     "page": DEFAULT_PAGE, "per_page": DEFAULT_PER_PAGE,
+                     "orientation": DEFAULT_ORIENTATION},
         "blank": blank_label(),
     }
 
@@ -232,7 +251,7 @@ async def delete_label(
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail=str(e))
 
 
-@router.post("/sheet", summary="Printable US Letter PDF of the selected labels",
+@router.post("/sheet", summary="Printable PDF — N labels per A4/Letter page",
              response_class=Response)
 async def sheet(
     body: SheetIn,
@@ -240,10 +259,30 @@ async def sheet(
     db: AsyncSession = Depends(get_db),
 ) -> Response:
     try:
-        pdf = await svc.sheet_for_labels(body.label_ids, current_store.id, db, body.size)
+        pdf = await svc.sheet_for_labels(
+            body.label_ids, current_store.id, db,
+            body.per_page, body.page, body.repeat, body.cut_marks, body.orientation,
+        )
     except ValueError as e:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(e))
     return Response(
         content=pdf, media_type="application/pdf",
         headers={"Content-Disposition": 'attachment; filename="liquoriq-shelf-labels.pdf"'},
     )
+
+
+@router.post("/sheet-preview", summary="PNG of page 1 — check before spending paper")
+async def sheet_preview(
+    body: SheetIn,
+    current_store: Annotated[Store, Depends(get_current_store)],
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    import base64
+    try:
+        png = await svc.sheet_preview_for_labels(
+            body.label_ids, current_store.id, db,
+            body.per_page, body.page, body.repeat, body.cut_marks, body.orientation,
+        )
+    except ValueError as e:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(e))
+    return {"image": "data:image/png;base64," + base64.b64encode(png).decode()}

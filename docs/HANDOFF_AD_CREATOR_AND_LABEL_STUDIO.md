@@ -2,7 +2,7 @@
 LiquorIQ — MODULE SPLIT: AI AD CREATOR + LABEL STUDIO
 Feature handoff (supersedes docs/HANDOFF_PROFESSIONAL_CREATIVE_EDITOR.md)
 ═══════════════════════════════════════════════
-Alembic head: **e7c93f2b1a06** · Tests: **150 passing** (cd backend && pytest -q)
+Alembic head: **e7c93f2b1a06** · Tests: **166 passing** (cd backend && pytest -q)
 Frontend deps: none added (react-konva/konva were removed — Label Studio renders
 server-side now)
 
@@ -200,7 +200,29 @@ SAVED STYLES (templates): as_template() keeps the LOOK and blanks the product
   content has a regular price. A test covers this; without it, applying a style
   silently hid the SAVE line.
 
-SIZES (300 DPI): small 3.5×2″ · medium 4×3″ · wide 5×3″ · large 5×7″.
+PRINT SHEETS — 2 / 4 / 6 / 9 / 12 LABELS PER A4 (or US Letter):
+  The owner picks HOW MANY go on a page and we divide the paper into that many
+  equal cells (1×2, 2×2, 2×3, 3×3, 3×4), then render each label AT THE CELL SIZE
+  via _render(spec, size_px=…). Because element positions are relative, a label
+  re-flows into any cell shape — that is the payoff of the relative model, and
+  there is a test asserting a label renders correctly at 300×600, 900×300 and
+  500×500. cell_inches() reports the finished cut size so the UI can show it.
+  · ORIENTATION turns the PAPER, and the grid TRANSPOSES with it, so the cells
+    stay label-shaped: 9-up portrait A4 = 2.44×3.58″ (tall), 9-up landscape A4 =
+    3.58×2.44″ (wide). Shelf tags are wider than tall, so LANDSCAPE IS THE
+    DEFAULT — portrait cells left a wide tag floating in empty space.
+  · "Fill the page by repeating" prints many copies of one tag on a single page
+    (the common case); otherwise the selection paginates.
+  · Cut guides around every cell plus crop ticks in the page margins.
+  · Renders are cached per distinct label, so 12 copies cost one render.
+  · POST /label-studio/sheet → PDF, POST /label-studio/sheet-preview → PNG of
+    page 1 so the arrangement can be checked before spending paper.
+  GOTCHA FIXED: short lines ("REGULAR: $36.99", "SAVE $4 !") inherited the
+  default lines=2, so in a narrow 9-up cell they WRAPPED and collided with each
+  other. Those preset elements are now lines=1, which makes them shrink instead.
+
+SIZES for a single exported label (300 DPI): small 3.5×2″ · medium 4×3″ ·
+wide 5×3″ · large 5×7″. On a sheet the CELL size wins, not this.
 FONTS: serif (DejaVu, default) · serif_alt (Liberation/Times) · sans.
 ACCENTS: sale red · all black · green · navy.  ART: bottles · barrel · both · grapes.
 

@@ -13,8 +13,14 @@ class LabelIn(BaseModel):
 
 
 class SheetIn(BaseModel):
-    label_ids: list[uuid.UUID] = Field(min_length=1, max_length=60)
-    size: str | None = Field(default=None, description="Override; defaults to the first label's size")
+    """Print N labels per page; the page is divided into that many equal cells."""
+    label_ids: list[uuid.UUID] = Field(min_length=1, max_length=120)
+    per_page: int = Field(default=4, description="2, 4, 6, 9 or 12 labels per sheet")
+    page: str = Field(default="a4", pattern="^(a4|letter)$")
+    orientation: str = Field(default="landscape", pattern="^(portrait|landscape)$",
+                             description="Turns the PAPER; the grid transposes with it")
+    repeat: bool = Field(default=False, description="Repeat the selection to fill one page")
+    cut_marks: bool = Field(default=True, description="Print cut guides and crop ticks")
 
 
 class TemplateIn(BaseModel):

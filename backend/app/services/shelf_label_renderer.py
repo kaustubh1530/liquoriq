@@ -22,7 +22,14 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
 
-from app.services.shelf_label import ACCENTS, ART, LABEL_SIZES, size_pixels, validate_label
+from app.services.shelf_label import (
+    ACCENTS,
+    ART,
+    page_pixels,
+    sheet_grid,
+    size_pixels,
+    validate_label,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -38,8 +45,8 @@ INK = (17, 17, 17)
 PAPER = (255, 255, 255)
 MUTED = (105, 105, 105)
 
-PAGE_W, PAGE_H = 2550, 3300
-PAGE_MARGIN = 150
+# (page geometry now comes from shelf_label.PAGE_SIZES)
+
 CUT_GUIDE = (200, 200, 200)
 
 
@@ -320,16 +327,23 @@ def _draw_element(img, d, el, W, H, bold, reg, accent_hex) -> tuple:
     return (x, y, w, total_h)
 
 
-def _render(spec: dict, scale: float = 1.0, with_boxes: bool = False):
+def _render(spec: dict, scale: float = 1.0, with_boxes: bool = False,
+            size_px: tuple[int, int] | None = None):
     """
     Draw the label. When with_boxes is set, also return each element's box in
     RELATIVE units — the browser positions its drag handles from these, which is
     what keeps the editor aligned with the print.
+
+    size_px overrides the label's own size, which is how sheet printing works:
+    each cell asks for a label at exactly the cell's pixel dimensions.
     """
     L = validate_label(spec)
-    W, H = size_pixels(L["size"])
-    if scale != 1.0:
-        W, H = max(80, int(W * scale)), max(80, int(H * scale))
+    if size_px:
+        W, H = max(40, int(size_px[0])), max(40, int(size_px[1]))
+    else:
+        W, H = size_pixels(L["size"])
+        if scale != 1.0:
+            W, H = max(80, int(W * scale)), max(80, int(H * scale))
 
     bold, reg = _fonts(L["font"])
     accent_hex = ACCENTS.get(L["accent"], ACCENTS["red"])["hex"]
@@ -362,31 +376,91 @@ def _render(spec: dict, scale: float = 1.0, with_boxes: bool = False):
     return (png, boxes, (W, H)) if with_boxes else png
 
 
-def _render_sheet(specs: list[dict], size_key: str) -> bytes:
-    lw, lh = size_pixels(size_key)
-    cols = max(1, (PAGE_W - PAGE_MARGIN * 2) // lw)
-    rows = max(1, (PAGE_H - PAGE_MARGIN * 2) // lh)
-    per_page = cols * rows
+def _build_pages(specs, per_page, page_key, repeat, cut_marks,
+                 orientation="landscape") -> list[Image.Image]:
+    """
+    Divide the paper into `per_page` equal cells and draw one label per cell.
 
-    gap_x = (PAGE_W - PAGE_MARGIN * 2 - cols * lw) // max(1, cols - 1) if cols > 1 else 0
-    gap_y = (PAGE_H - PAGE_MARGIN * 2 - rows * lh) // max(1, rows - 1) if rows > 1 else 0
-    gap_x, gap_y = min(gap_x, 60), min(gap_y, 60)
+    The cell size — not the label's own size setting — decides the printed
+    dimensions, which is what makes "12 per A4" mean something concrete. Labels
+    re-flow into the cell because every element position is relative.
+
+    Orientation turns the PAPER, and the grid transposes with it, so landscape
+    gives wide label-shaped cells rather than tall narrow ones.
+    """
+    cols, rows = sheet_grid(per_page, orientation)
+    slots = cols * rows
+    PW, PH = page_pixels(page_key, orientation)
+
+    margin = int(0.35 * 300)
+    gap = int(0.12 * 300)
+    cw = (PW - margin * 2 - gap * (cols - 1)) // cols
+    ch = (PH - margin * 2 - gap * (rows - 1)) // rows
+
+    if repeat and specs:
+        # "Print 12 of this one tag" — the common case for a single promo
+        page_count = 1
+        specs = [specs[i % len(specs)] for i in range(slots)]
+    else:
+        page_count = max(1, math.ceil(len(specs) / slots))
+
+    # One render per distinct label, reused across cells — printing 12 copies of
+    # one tag should cost one render, not twelve.
+    cache: dict[int, Image.Image] = {}
 
     pages: list[Image.Image] = []
-    for start in range(0, max(1, len(specs)), per_page):
-        page = Image.new("RGB", (PAGE_W, PAGE_H), PAPER)
+    for p in range(page_count):
+        page = Image.new("RGB", (PW, PH), PAPER)
         pd = ImageDraw.Draw(page)
-        for idx, spec in enumerate(specs[start:start + per_page]):
+        chunk = specs[p * slots:(p + 1) * slots]
+        for idx, spec in enumerate(chunk):
             r, c = divmod(idx, cols)
-            x = PAGE_MARGIN + c * (lw + gap_x)
-            y = PAGE_MARGIN + r * (lh + gap_y)
-            page.paste(Image.open(BytesIO(_render({**spec, "size": size_key}))), (x, y))
-            pd.rectangle([x - 1, y - 1, x + lw + 1, y + lh + 1], outline=CUT_GUIDE, width=1)
-        pages.append(page)
+            x = margin + c * (cw + gap)
+            y = margin + r * (ch + gap)
+            key = id(spec)
+            if key not in cache:
+                cache[key] = Image.open(BytesIO(_render(spec, size_px=(cw, ch))))
+            page.paste(cache[key], (x, y))
+            if cut_marks:
+                pd.rectangle([x - 1, y - 1, x + cw + 1, y + ch + 1],
+                             outline=CUT_GUIDE, width=1)
 
+        if cut_marks:
+            _crop_marks(pd, PW, PH, margin, gap, cols, rows, cw, ch)
+        pages.append(page)
+    return pages
+
+
+def _crop_marks(pd, PW, PH, margin, gap, cols, rows, cw, ch):
+    """Ticks in the page margins so the cut lines are findable with a guillotine."""
+    tick = int(0.16 * 300)
+    for c in range(cols + 1):
+        x = margin + c * (cw + gap) - (gap // 2 if 0 < c < cols else 0)
+        pd.line([(x, 0), (x, tick)], fill=CUT_GUIDE, width=2)
+        pd.line([(x, PH - tick), (x, PH)], fill=CUT_GUIDE, width=2)
+    for r in range(rows + 1):
+        y = margin + r * (ch + gap) - (gap // 2 if 0 < r < rows else 0)
+        pd.line([(0, y), (tick, y)], fill=CUT_GUIDE, width=2)
+        pd.line([(PW - tick, y), (PW, y)], fill=CUT_GUIDE, width=2)
+
+
+def _render_sheet(specs: list[dict], per_page: int = 4, page_key: str = "a4",
+                  repeat: bool = False, cut_marks: bool = True,
+                  orientation: str = "landscape") -> bytes:
+    pages = _build_pages(specs, per_page, page_key, repeat, cut_marks, orientation)
     buf = BytesIO()
     pages[0].save(buf, format="PDF", resolution=300.0, save_all=True,
                   append_images=pages[1:])
+    return buf.getvalue()
+
+
+def _render_sheet_preview(specs, per_page=4, page_key="a4", repeat=False,
+                          cut_marks=True, orientation="landscape", width=560) -> bytes:
+    """A small PNG of page 1 so the arrangement can be checked before printing."""
+    page = _build_pages(specs, per_page, page_key, repeat, cut_marks, orientation)[0]
+    h = int(page.height * width / page.width)
+    buf = BytesIO()
+    page.resize((width, h), Image.LANCZOS).save(buf, format="PNG", optimize=True)
     return buf.getvalue()
 
 
@@ -399,20 +473,25 @@ async def render_preview(spec: dict, scale: float = 0.42):
     return await asyncio.to_thread(_render, spec, scale, True)
 
 
-async def render_sheet(specs: list[dict], size_key: str) -> bytes:
+async def render_sheet(specs: list[dict], per_page: int = 4, page_key: str = "a4",
+                       repeat: bool = False, cut_marks: bool = True,
+                       orientation: str = "landscape") -> bytes:
     if not specs:
         raise ValueError("Select at least one label to print.")
-    if size_key not in LABEL_SIZES:
-        size_key = "medium"
-    logger.info("Rendering label sheet: %d labels at size=%s", len(specs), size_key)
-    return await asyncio.to_thread(_render_sheet, specs, size_key)
+    logger.info("Rendering sheet: %d labels, %s per %s %s page (repeat=%s)",
+                len(specs), per_page, orientation, page_key, repeat)
+    return await asyncio.to_thread(_render_sheet, specs, per_page, page_key,
+                                   repeat, cut_marks, orientation)
 
 
-def labels_per_page(size_key: str) -> int:
-    lw, lh = size_pixels(size_key)
-    cols = max(1, (PAGE_W - PAGE_MARGIN * 2) // lw)
-    rows = max(1, (PAGE_H - PAGE_MARGIN * 2) // lh)
-    return int(cols * rows)
+async def render_sheet_preview(specs: list[dict], per_page: int = 4,
+                               page_key: str = "a4", repeat: bool = False,
+                               cut_marks: bool = True,
+                               orientation: str = "landscape") -> bytes:
+    if not specs:
+        raise ValueError("Select at least one label to preview.")
+    return await asyncio.to_thread(_render_sheet_preview, specs, per_page,
+                                   page_key, repeat, cut_marks, orientation)
 
 
 assert set(_ART_FNS) == set(ART), "an art piece is advertised but not drawable"

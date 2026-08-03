@@ -247,17 +247,109 @@ def test_hidden_elements_get_no_box():
     assert boxes == []
 
 
-# ── Print sheet ───────────────────────────────────────────────────────────────
+# ── Print sheets: N labels per A4/Letter page ─────────────────────────────────
 
-def test_labels_per_page_is_size_dependent():
-    assert slr.labels_per_page("small") > slr.labels_per_page("large") >= 1
+def test_every_offered_layout_has_a_grid():
+    for per_page, (cols, rows) in sl.SHEET_LAYOUTS.items():
+        assert cols * rows == per_page, per_page
 
 
-def test_sheet_paginates_and_is_a_real_pdf():
-    one = sl.build_from_style("minimal", {"product_name": "B", "price": "$9.99"})
-    specs = [one] * (slr.labels_per_page("small") + 3)
-    pdf = slr._render_sheet(specs, "small")
+@pytest.mark.parametrize("per_page", [2, 4, 6, 9, 12])
+def test_sheet_renders_for_each_per_page_count(per_page):
+    label = sl.build_from_style("classic", {"product_name": "Bottle", "price": "$9.99"})
+    pdf = slr._render_sheet([label], per_page, "a4", repeat=True)
     assert pdf[:4] == b"%PDF" and len(pdf) > 1000
+
+
+def test_cell_size_shrinks_as_more_labels_fit():
+    """12-up cells must be smaller than 2-up cells, or the maths is wrong."""
+    big = sl.cell_inches(2, "a4")
+    small = sl.cell_inches(12, "a4")
+    assert small[0] < big[0] and small[1] < big[1]
+
+
+def test_cells_fit_inside_the_page():
+    for per_page in sl.SHEET_LAYOUTS:
+        for page in sl.PAGE_SIZES:
+            for orient in sl.ORIENTATIONS:
+                cols, rows = sl.sheet_grid(per_page, orient)
+                cw, ch = sl.cell_inches(per_page, page, orient)
+                pw, ph = sl.page_inches(page, orient)
+                assert cw * cols <= pw and ch * rows <= ph, (per_page, page, orient)
+                assert cw > 0.5 and ch > 0.5
+
+
+def test_landscape_transposes_the_grid_and_the_cell():
+    """
+    The reason this exists: 9-up on portrait A4 gives TALL cells, which left a
+    wide shelf tag floating in empty space. Landscape must give wide cells.
+    """
+    pw, ph = sl.cell_inches(9, "a4", "portrait")
+    lw, lh = sl.cell_inches(9, "a4", "landscape")
+    assert ph > pw, "portrait cells should be taller than wide"
+    assert lw > lh, "landscape cells should be wider than tall"
+    assert sl.sheet_grid(6, "portrait") == (2, 3)
+    assert sl.sheet_grid(6, "landscape") == (3, 2)
+
+
+def test_orientation_changes_the_rendered_page_shape():
+    label = sl.build_from_style("minimal", {"product_name": "B", "price": "$9.99"})
+    portrait = slr._build_pages([label], 9, "a4", True, False, "portrait")[0]
+    landscape = slr._build_pages([label], 9, "a4", True, False, "landscape")[0]
+    assert portrait.height > portrait.width
+    assert landscape.width > landscape.height
+
+
+def test_unknown_orientation_falls_back_to_portrait_geometry():
+    """Anything that isn't 'landscape' is treated as portrait — never a crash."""
+    assert sl.page_inches("a4", "sideways") == sl.page_inches("a4", "portrait")
+
+
+def test_repeat_fills_exactly_one_page():
+    """'Print 12 of this tag' → one page, not twelve pages of one label each."""
+    label = sl.build_from_style("minimal", {"product_name": "B", "price": "$9.99"})
+    pages = slr._build_pages([label], 12, "a4", repeat=True, cut_marks=True)
+    assert len(pages) == 1
+
+
+def test_without_repeat_it_paginates():
+    label = sl.build_from_style("minimal", {"product_name": "B", "price": "$9.99"})
+    pages = slr._build_pages([label] * 10, 4, "a4", repeat=False, cut_marks=True)
+    assert len(pages) == 3            # 4 + 4 + 2
+
+
+def test_a4_and_letter_pages_differ_in_size():
+    a4 = slr._build_pages([{}], 4, "a4", False, False, "portrait")[0]
+    letter = slr._build_pages([{}], 4, "letter", False, False, "portrait")[0]
+    assert a4.size != letter.size
+    assert a4.height > letter.height  # A4 is the taller sheet
+
+
+def test_unknown_per_page_falls_back_instead_of_crashing():
+    assert sl.sheet_grid(7) == sl.SHEET_LAYOUTS[sl.DEFAULT_PER_PAGE]
+    assert sl.sheet_grid(0) == sl.SHEET_LAYOUTS[sl.DEFAULT_PER_PAGE]
+
+
+def test_label_renders_at_an_arbitrary_cell_size():
+    """The payoff of relative positions: any cell shape still lays out."""
+    label = sl.build_from_style("classic", {"product_name": "Woodford", "price": "$32.99"})
+    for size in [(300, 600), (900, 300), (500, 500)]:
+        assert Image.open(BytesIO(slr._render(label, size_px=size))).size == size
+
+
+def test_sheet_preview_is_a_png():
+    label = sl.build_from_style("minimal", {"product_name": "B", "price": "$1.99"})
+    png = slr._render_sheet_preview([label], 6, "a4", repeat=True)
+    assert png[:8] == b"\x89PNG\r\n\x1a\n"
+
+
+def test_empty_selection_is_rejected():
+    # Drive the coroutine one step instead of asyncio.run(): the guard raises
+    # before the first await, and spinning up a loop here would close the one
+    # other async tests in this suite rely on.
+    coro = slr.render_sheet([], 4, "a4")
+    with pytest.raises(ValueError):
+        coro.send(None)
 
 
 def test_label_summary_uses_the_first_text_and_price():

@@ -20,7 +20,7 @@ from app.services.shelf_label import (
     label_summary,
     validate_label,
 )
-from app.services.shelf_label_renderer import render_label, render_sheet
+from app.services.shelf_label_renderer import render_label, render_sheet, render_sheet_preview
 from app.services.storage_service import save_image
 
 logger = logging.getLogger(__name__)
@@ -133,13 +133,8 @@ async def export_label(
     return row
 
 
-async def sheet_for_labels(
-    label_ids: list[uuid.UUID], store_id: uuid.UUID, db: AsyncSession, size: str | None = None
-) -> bytes:
-    """
-    A printable US Letter PDF of the chosen labels. Store-scoped: ids belonging
-    to another store are simply not found, so nothing leaks across tenants.
-    """
+async def _specs_for(label_ids, store_id, db) -> list[dict]:
+    """The chosen labels, store-scoped and in the order the owner picked them."""
     if not label_ids:
         raise ValueError("Select at least one label to print.")
     result = await db.execute(
@@ -150,14 +145,32 @@ async def sheet_for_labels(
     rows = [r for r in result.scalars().all() if not r.is_template]
     if not rows:
         raise ValueError("None of those labels were found.")
-
-    # Preserve the order the owner selected them in
     order = {lid: i for i, lid in enumerate(label_ids)}
     rows.sort(key=lambda r: order.get(r.id, 0))
+    return [r.design_json for r in rows]
 
-    specs = [r.design_json for r in rows]
-    sheet_size = size or specs[0].get("size", "medium")
-    return await render_sheet(specs, sheet_size)
+
+async def sheet_for_labels(
+    label_ids: list[uuid.UUID], store_id: uuid.UUID, db: AsyncSession,
+    per_page: int = 4, page: str = "a4", repeat: bool = False, cut_marks: bool = True,
+    orientation: str = "landscape",
+) -> bytes:
+    """
+    A printable PDF with `per_page` labels on each sheet. Store-scoped: ids
+    belonging to another store simply aren't found, so nothing leaks.
+    """
+    specs = await _specs_for(label_ids, store_id, db)
+    return await render_sheet(specs, per_page, page, repeat, cut_marks, orientation)
+
+
+async def sheet_preview_for_labels(
+    label_ids: list[uuid.UUID], store_id: uuid.UUID, db: AsyncSession,
+    per_page: int = 4, page: str = "a4", repeat: bool = False, cut_marks: bool = True,
+    orientation: str = "landscape",
+) -> bytes:
+    """PNG of page 1 — check the arrangement before spending paper."""
+    specs = await _specs_for(label_ids, store_id, db)
+    return await render_sheet_preview(specs, per_page, page, repeat, cut_marks, orientation)
 
 
 async def product_suggestions(

@@ -30,6 +30,68 @@ LABEL_SIZES: dict[str, dict] = {
 }
 DEFAULT_SIZE = "medium"
 
+# ── Print sheets ──────────────────────────────────────────────────────────────
+# The owner picks HOW MANY labels go on a page and we divide the paper into that
+# many equal cells. Because element positions are relative, a label re-flows into
+# whatever cell it lands in — that is the whole payoff of the relative model.
+PAGE_SIZES: dict[str, dict] = {
+    "a4":     {"key": "a4",     "label": "A4",        "inches": (8.27, 11.69)},
+    "letter": {"key": "letter", "label": "US Letter", "inches": (8.5, 11.0)},
+}
+DEFAULT_PAGE = "a4"
+
+ORIENTATIONS = ("portrait", "landscape")
+DEFAULT_ORIENTATION = "landscape"   # shelf tags are usually wider than they are tall
+
+# per-page count → (columns, rows) on a PORTRAIT page.
+# On a landscape page the grid is transposed, which keeps the cells a sensible
+# shape instead of producing long thin strips.
+SHEET_LAYOUTS: dict[int, tuple[int, int]] = {
+    1: (1, 1),
+    2: (1, 2),
+    4: (2, 2),
+    6: (2, 3),
+    9: (3, 3),
+    12: (3, 4),
+}
+DEFAULT_PER_PAGE = 4
+
+PAGE_MARGIN_IN = 0.35
+PAGE_GAP_IN = 0.12
+
+
+def page_inches(page_key: str, orientation: str = DEFAULT_ORIENTATION) -> tuple[float, float]:
+    w, h = (PAGE_SIZES.get(page_key) or PAGE_SIZES[DEFAULT_PAGE])["inches"]
+    return (h, w) if orientation == "landscape" else (w, h)
+
+
+def page_pixels(page_key: str, orientation: str = DEFAULT_ORIENTATION) -> tuple[int, int]:
+    w, h = page_inches(page_key, orientation)
+    return int(w * DPI), int(h * DPI)
+
+
+def sheet_grid(per_page: int, orientation: str = DEFAULT_ORIENTATION) -> tuple[int, int]:
+    """
+    Columns and rows for a per-page count. Transposed on a landscape page so the
+    cells stay label-shaped: 9-up portrait gives tall 2.4×3.6″ cells, while 9-up
+    landscape gives wide 3.6×2.4″ cells — which is what a shelf tag wants.
+    """
+    cols, rows = SHEET_LAYOUTS.get(int(per_page or 0), SHEET_LAYOUTS[DEFAULT_PER_PAGE])
+    return (rows, cols) if orientation == "landscape" else (cols, rows)
+
+
+def cell_inches(per_page: int, page_key: str = DEFAULT_PAGE,
+                orientation: str = DEFAULT_ORIENTATION,
+                margin_in: float = PAGE_MARGIN_IN,
+                gap_in: float = PAGE_GAP_IN) -> tuple[float, float]:
+    """The finished size of one label on that sheet — shown so the owner knows
+    what they're cutting out before they print."""
+    cols, rows = sheet_grid(per_page, orientation)
+    pw, ph = page_inches(page_key, orientation)
+    cw = (pw - margin_in * 2 - gap_in * (cols - 1)) / cols
+    ch = (ph - margin_in * 2 - gap_in * (rows - 1)) / rows
+    return (round(cw, 2), round(ch, 2))
+
 
 def size_pixels(size_key: str) -> tuple[int, int]:
     spec = LABEL_SIZES.get(size_key) or LABEL_SIZES[DEFAULT_SIZE]
@@ -224,21 +286,24 @@ def _el(kind, text, x, y, w, size, **over):
 
 def preset_classic(c: dict) -> list[dict]:
     """Their Woodford tag: name on top, starburst, huge price, REGULAR + SAVE."""
+    # NOTE: the short lines below are lines=1 on purpose. In a narrow sheet cell
+    # (e.g. 9-up) a two-line-capable "REGULAR: $36.99" wraps and overruns its
+    # gap, colliding with SAVE. Forcing one line makes it SHRINK instead.
     out = [_el("text", c["product_name"], 0.06, 0.06, 0.66, 0.15, lines=2)]
     if c.get("size_text"):
         out.append(_el("text", c["size_text"], 0.74, 0.08, 0.20, 0.062,
-                       align="right", bold=False))
+                       align="right", bold=False, lines=1))
     if c.get("show_badge", True):
         out.append(_el("starburst", c.get("badge_text") or "Sale",
                        0.05, 0.40, 0.20, 0.055, color="paper", align="center"))
     out.append(_el("price", c["price"], 0.28, 0.34, 0.66, 0.24,
                    color="accent" if c.get("red_price") else "ink"))
     if c.get("regular_price"):
-        out.append(_el("text", f"REGULAR: {c['regular_price']}", 0.14, 0.62, 0.72,
-                       0.065, align="center", bold=False))
+        out.append(_el("text", f"REGULAR: {c['regular_price']}", 0.10, 0.62, 0.80,
+                       0.065, align="center", bold=False, lines=1))
     save = savings(c.get("price"), c.get("regular_price"))
     if save:
-        out.append(_el("text", save, 0.14, 0.71, 0.72, 0.075, align="center"))
+        out.append(_el("text", save, 0.10, 0.71, 0.80, 0.075, align="center", lines=1))
     out.append(_el("art", "", 0.06, 0.78, 0.15, 0.10, art="bottles"))
     out.append(_el("art", "", 0.80, 0.78, 0.14, 0.10, art="barrel"))
     return out
@@ -250,7 +315,7 @@ def preset_price_first(c: dict) -> list[dict]:
                align="center", color="accent")]
     if c.get("regular_price"):
         out.append(_el("text", f"Regular: {c['regular_price']}", 0.06, 0.27, 0.88,
-                       0.058, align="center", bold=False))
+                       0.058, align="center", bold=False, lines=1))
     # Spacing here is deliberate: a two-line name occupies ~2 × size × 1.12, so
     # the subname must start below that or the two overlap.
     out.append(_el("text", c["product_name"], 0.06, 0.35, 0.88, 0.115,
@@ -260,11 +325,11 @@ def preset_price_first(c: dict) -> list[dict]:
                        align="center", lines=2))
     if c.get("size_text"):
         out.append(_el("text", c["size_text"], 0.76, 0.77, 0.18, 0.045,
-                       align="right", bold=False))
+                       align="right", bold=False, lines=1))
     footer = c.get("footer") or savings(c.get("price"), c.get("regular_price"))
     if footer:
         out.append(_el("text", footer, 0.06, 0.85, 0.88, 0.068,
-                       align="center", color="accent"))
+                       align="center", color="accent", lines=1))
     return out
 
 
@@ -281,7 +346,7 @@ def preset_deal_bookend(c: dict) -> list[dict]:
     out.append(_el("price", c["price"], 0.14, 0.48, 0.72, 0.20, align="center"))
     if c.get("store_name"):
         out.append(_el("text", c["store_name"], 0.14, 0.85, 0.72, 0.062,
-                       align="center", bold=False))
+                       align="center", bold=False, lines=1))
     return out
 
 

@@ -47,6 +47,13 @@ export default function LabelStudio() {
   const [showGrid, setShowGrid] = useState(false)
   const [showStart, setShowStart] = useState(false)
   const [starter, setStarter] = useState({ product_name: '', price: '', regular_price: '' })
+  const [perPage, setPerPage] = useState(4)
+  const [page, setPage] = useState('a4')
+  const [orientation, setOrientation] = useState('landscape')
+  const [repeat, setRepeat] = useState(false)
+  const [cutMarks, setCutMarks] = useState(true)
+  const [sheetImg, setSheetImg] = useState('')
+  const [sheetBusy, setSheetBusy] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(true)
@@ -234,12 +241,33 @@ export default function LabelStudio() {
     } catch (e) { setError(e.response?.data?.detail ?? 'Could not delete.') }
   }
 
+  const sheetOpts = { perPage, page, repeat, cutMarks, orientation }
+  // The finished cut size for the current sheet settings
+  const cellFor = (n) => options?.sheet_layouts?.find((l) => l.per_page === n)
+    ?.cells?.[`${page}_${orientation}`]
+
   const handlePrint = async () => {
     setBusy(true)
-    try { await labelStudioApi.printSheet(selected) }
+    try { await labelStudioApi.printSheet(selected, sheetOpts) }
     catch (e) { setError(e.response?.data?.detail ?? 'Could not build the sheet.') }
     finally { setBusy(false) }
   }
+
+  // Preview page 1 whenever the selection or sheet settings change, so the
+  // owner sees the arrangement before spending paper.
+  useEffect(() => {
+    if (!selected.length) { setSheetImg(''); return }
+    const t = setTimeout(async () => {
+      setSheetBusy(true)
+      try {
+        const { data } = await labelStudioApi.sheetPreview(selected, sheetOpts)
+        setSheetImg(data.image)
+      } catch { setSheetImg('') }
+      finally { setSheetBusy(false) }
+    }, 300)
+    return () => clearTimeout(t)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selected, perPage, page, repeat, cutMarks, orientation])
 
   const filteredProducts = useMemo(() => {
     const q = productQuery.trim().toLowerCase()
@@ -589,11 +617,9 @@ export default function LabelStudio() {
             <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide">
               Saved labels {labels.length > 0 && `(${labels.length})`}
             </p>
-            <button onClick={handlePrint} disabled={busy || selected.length === 0}
-              className="flex items-center gap-1.5 text-xs font-semibold px-4 py-2 rounded-xl bg-gray-900 text-white disabled:opacity-40">
-              <Printer size={14} />
-              {selected.length ? `Print ${selected.length}` : 'Tick labels to print'}
-            </button>
+            <p className="text-[11px] text-gray-400">
+              Tick the ones you want on the sheet
+            </p>
           </div>
 
           {labels.length === 0 ? (
@@ -626,6 +652,104 @@ export default function LabelStudio() {
                   </div>
                 )
               })}
+            </div>
+          )}
+
+          {/* ── Print sheet ── */}
+          {selected.length > 0 && (
+            <div className="mt-6 bg-white rounded-2xl border border-gray-200 p-4">
+              <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_300px] gap-6 items-start">
+                <div className="space-y-4">
+                  <div className="flex items-center gap-2">
+                    <Printer size={16} className="text-brand-500" />
+                    <h2 className="text-sm font-bold text-gray-800">
+                      Print sheet — {selected.length} label{selected.length === 1 ? '' : 's'} selected
+                    </h2>
+                  </div>
+
+                  <div>
+                    <p className={lbl}>How many per page</p>
+                    <div className="flex flex-wrap gap-2">
+                      {(options.sheet_layouts ?? []).map((l) => {
+                        const cell = l.cells?.[`${page}_${orientation}`] ?? []
+                        const grid = l.grids?.[orientation] ?? []
+                        const on = perPage === l.per_page
+                        return (
+                          <button key={l.per_page} onClick={() => setPerPage(l.per_page)}
+                            className={`px-3 py-2 rounded-xl border text-left transition-colors ${
+                              on ? 'border-brand-500 bg-brand-50' : 'border-gray-200 hover:border-gray-300'}`}>
+                            <p className={`text-sm font-bold ${on ? 'text-brand-700' : 'text-gray-700'}`}>
+                              {l.per_page}
+                            </p>
+                            <p className="text-[10px] text-gray-400 whitespace-nowrap">
+                              {grid[0]}×{grid[1]} · {cell[0]}×{cell[1]}″
+                            </p>
+                          </button>
+                        )
+                      })}
+                    </div>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-xs text-gray-600">
+                    <label className="flex items-center gap-1.5">Paper
+                      <select value={page} onChange={(e) => setPage(e.target.value)}
+                        className="border border-gray-200 rounded-lg px-2 py-1">
+                        {(options.pages ?? []).map((p) => (
+                          <option key={p.key} value={p.key}>{p.label}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <div className="inline-flex rounded-lg border border-gray-200 overflow-hidden text-[11px] font-semibold">
+                      {[['landscape', 'Landscape'], ['portrait', 'Portrait']].map(([v, t]) => (
+                        <button key={v} onClick={() => setOrientation(v)}
+                          className={`px-2.5 py-1 transition-colors ${
+                            orientation === v ? 'bg-brand-500 text-white' : 'bg-white text-gray-500 hover:bg-gray-50'}`}>
+                          {t}
+                        </button>
+                      ))}
+                    </div>
+                    <label className="flex items-center gap-1.5">
+                      <input type="checkbox" checked={repeat}
+                        onChange={(e) => setRepeat(e.target.checked)} />
+                      Fill the page by repeating
+                    </label>
+                    <label className="flex items-center gap-1.5">
+                      <input type="checkbox" checked={cutMarks}
+                        onChange={(e) => setCutMarks(e.target.checked)} />
+                      Cut guides
+                    </label>
+                  </div>
+
+                  <p className="text-[11px] text-gray-400">
+                    {repeat
+                      ? `Repeats your ${selected.length} selected label${selected.length === 1 ? '' : 's'} to fill one page — good for printing many of the same tag.`
+                      : `${Math.ceil(selected.length / perPage)} page${Math.ceil(selected.length / perPage) === 1 ? '' : 's'}. Each label prints at ${cellFor(perPage)?.join('″ × ')}″ — cut along the guides.`}
+                  </p>
+
+                  <button onClick={handlePrint} disabled={busy}
+                    className="flex items-center gap-1.5 text-xs font-semibold px-4 py-2.5 rounded-xl bg-gray-900 text-white disabled:opacity-40">
+                    <Printer size={14} /> Download printable PDF
+                  </button>
+                </div>
+
+                {/* Page preview */}
+                <div className="relative">
+                  <p className={lbl}>Page 1 preview</p>
+                  {sheetImg ? (
+                    <img src={sheetImg} alt="Sheet preview"
+                      className="w-full rounded-lg border border-gray-200 bg-white" />
+                  ) : (
+                    <div className="w-full aspect-[1/1.414] rounded-lg border border-dashed border-gray-200 flex items-center justify-center text-xs text-gray-400">
+                      {sheetBusy ? 'Building…' : 'Select labels to preview'}
+                    </div>
+                  )}
+                  {sheetBusy && sheetImg && (
+                    <span className="absolute top-7 right-2 text-gray-400">
+                      <Loader2 size={14} className="animate-spin" />
+                    </span>
+                  )}
+                </div>
+              </div>
             </div>
           )}
         </div>

@@ -293,10 +293,11 @@ export const labelStudioApi = {
   // "Start me off": a style + your content → a full set of movable elements
   fromStyle: (style, content, base) =>
     api.post('/label-studio/from-style', { style, content, base }),
-  // Printable US Letter PDF of many labels → downloads straight to the browser
-  printSheet: async (labelIds, size = null) => {
-    const res = await api.post('/label-studio/sheet',
-      { label_ids: labelIds, size }, { responseType: 'blob' })
+  // N labels per A4/Letter page → PDF straight to the browser, ready to cut up
+  printSheet: async (labelIds, { perPage = 4, page = 'a4', repeat = false, cutMarks = true, orientation = 'landscape' } = {}) => {
+    const res = await api.post('/label-studio/sheet', {
+      label_ids: labelIds, per_page: perPage, page, repeat, cut_marks: cutMarks, orientation,
+    }, { responseType: 'blob' })
     const url = URL.createObjectURL(res.data)
     const a = document.createElement('a')
     a.href = url
@@ -304,6 +305,11 @@ export const labelStudioApi = {
     a.click()
     URL.revokeObjectURL(url)
   },
+  // Page 1 as a PNG so the arrangement can be checked before printing
+  sheetPreview: (labelIds, { perPage = 4, page = 'a4', repeat = false, cutMarks = true, orientation = 'landscape' } = {}) =>
+    api.post('/label-studio/sheet-preview', {
+      label_ids: labelIds, per_page: perPage, page, repeat, cut_marks: cutMarks, orientation,
+    }),
 }
 
 export default api
