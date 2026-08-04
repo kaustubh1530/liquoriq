@@ -35,6 +35,7 @@ export default defineConfig({
       '/static':    backend,
       '/reports':   backend,
       '/label-studio': backend,
+      '/intelligence': backend,
     },
   },
 })

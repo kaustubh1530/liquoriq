@@ -38,6 +38,7 @@ from app.models import customer  # noqa: F401 — Phase 19
 from app.models import campaign  # noqa: F401 — Phase 21
 from app.models import product_facts  # noqa: F401 — Professional Ad Upgrade
 from app.models import label_design  # noqa: F401 — Label Studio
+from app.models import product_category  # noqa: F401 — Phase 22 BI
 
 settings_app = get_settings()
 

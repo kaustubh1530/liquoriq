@@ -15,9 +15,9 @@ Status lifecycle:
 
 import enum
 import uuid
-from datetime import datetime, timezone
+from datetime import date as dt_date, datetime, timezone
 
-from sqlalchemy import BigInteger, DateTime, Enum, ForeignKey, String, Text
+from sqlalchemy import BigInteger, Boolean, Date, DateTime, Enum, ForeignKey, String, Text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -83,6 +83,19 @@ class UploadedReport(Base):
     )
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     rows_processed: Mapped[int | None] = mapped_column(nullable=True)
+
+    # ── Reporting period (Phase 22) ───────────────────────────────────────────
+    # The window the file actually covers. Everything velocity-based divides by
+    # this instead of assuming ~4.3 weeks: a WEEKLY upload was previously
+    # understating velocity 4x, which made every reorder and overstock verdict
+    # wrong. period_estimated=True means the file didn't state a period and we
+    # fell back to 30 days — the UI says so rather than pretending.
+    period_start: Mapped[dt_date | None] = mapped_column(Date, nullable=True)
+    period_end: Mapped[dt_date | None] = mapped_column(Date, nullable=True)
+    period_days: Mapped[int | None] = mapped_column(nullable=True)
+    period_estimated: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
 
     # ── Timestamps ────────────────────────────────────────────────────────────
     uploaded_at: Mapped[datetime] = mapped_column(

@@ -2,10 +2,11 @@
  * AIStrategy.jsx — Generate AI promotion strategies + view history
  */
 
-import { useEffect, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { useEffect, useRef, useState } from 'react'
+import { Link, useLocation } from 'react-router-dom'
 import { aiApi, dealApi, customerApi, campaignApi } from '../api/client'
 import Layout from '../components/Layout'
+import FromActionBanner from '../components/FromActionBanner'
 import { Sparkles, ChevronDown, ChevronUp, Megaphone, TrendingUp, TrendingDown, Tag, Trash2, Users, AlertTriangle, Send, MessageSquare, Mail } from 'lucide-react'
 
 // ── Send campaign (Phase 21): preview → confirm → send, to opted-in customers ──
@@ -421,6 +422,40 @@ export default function AIStrategy() {
   const [targetSegment, setTargetSegment] = useState('')  // '' = all customers
   const [audience, setAudience] = useState(null) // aggregate preview for selected segment
   const [audienceLoading, setAudienceLoading] = useState(false)
+  const [incoming, setIncoming] = useState(null)  // the dashboard action we came from
+
+  /**
+   * Arriving from a dashboard recommendation: pre-fill the form from it.
+   *
+   * The ref guards against re-applying on every render — without it, typing in
+   * the brief would be overwritten on the next state change, which reads as
+   * the page fighting you. The brief is only pre-filled when EMPTY, so
+   * anything already typed always wins.
+   */
+  const location = useLocation()
+  const applied = useRef(false)
+
+  useEffect(() => {
+    const from = location.state?.fromAction
+    if (!from || applied.current) return
+    applied.current = true
+    setIncoming(from)
+
+    const names = (from.products ?? []).slice(0, 15)
+    const lines = [
+      from.suggestion,
+      names.length ? `Focus on these products: ${names.join(', ')}` : '',
+    ].filter(Boolean)
+    setBrief((current) => current || lines.join('\n'))
+
+    if (from.type === 'seasonal' && from.evidence?.holiday) {
+      setOccasion(from.evidence.holiday)
+    }
+    if (from.type === 'winback') {
+      const segment = Object.keys(from.evidence?.segments ?? {})[0]
+      if (segment) setTargetSegment(segment)
+    }
+  }, [location.state])
 
   const load = async () => {
     try {
@@ -479,6 +514,8 @@ export default function AIStrategy() {
           Growth campaigns built around upcoming US holidays, your deal buys, and what already sells —
           with in-store and online plans
         </p>
+
+        <FromActionBanner action={incoming} onDismiss={() => setIncoming(null)} />
 
         <DealBuys deals={deals} onChange={loadDeals} />
 

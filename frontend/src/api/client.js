@@ -265,6 +265,37 @@ export const creativeApi = {
   compose: (creativeId, items) => api.post(`/creative/${creativeId}/compose`, { items }),
 }
 
+// ── PHASE 22: Business Intelligence Engine ────────────────────────────────────
+// Every figure from these endpoints is computed deterministically on the server.
+// `explain` is the ONLY AI call, and it returns prose about numbers we already
+// have — it cannot change one.
+
+export const intelligenceApi = {
+  all: () => api.get('/intelligence'),
+  actions: () => api.get('/intelligence/actions'),
+  opportunities: () => api.get('/intelligence/opportunities'),
+  categories: () => api.get('/intelligence/categories'),
+  inventory: ({ stockClass = null, category = null, limit = 100 } = {}) =>
+    api.get('/intelligence/inventory', {
+      params: { stock_class: stockClass || undefined, category: category || undefined, limit },
+    }),
+  // Turns retail figures into cash figures. Null clears it back to retail-only.
+  setGrossMargin: (pct) =>
+    api.post('/intelligence/gross-margin', { gross_margin_pct: pct }),
+  // A purchase list: what to buy, how many, net of stock on hand.
+  reorderList: (horizonWeeks = null) =>
+    api.get('/intelligence/reorder-list', {
+      params: { horizon_weeks: horizonWeeks || undefined },
+    }),
+  // Prose only. Falls back to deterministic text if OpenAI is unavailable.
+  explain: (action) => api.post('/intelligence/explain', { action }),
+  categoryOptions: () => api.get('/intelligence/category-options'),
+  overrideCategory: ({ productKey, productName = '', category, brand = null }) =>
+    api.post('/intelligence/category-override', {
+      product_key: productKey, product_name: productName, category, brand,
+    }),
+}
+
 // ── MODULE 2: Label Studio ────────────────────────────────────────────────────
 // Promotional badges only. Never calls the AI; only references a base image URL.
 

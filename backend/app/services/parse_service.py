@@ -17,12 +17,20 @@ It can also be called from a background task or queue in the future.
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import select
+import logging
+
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.normalized_sale import NormalizedSale
 from app.models.uploaded_report import ReportStatus, UploadedReport
 from app.services.parsers.registry import get_parser
+
+logger = logging.getLogger(__name__)
+
+# Used when a file states no reporting period. Flagged as estimated so nothing
+# downstream — or in the UI — treats it as a measured fact.
+DEFAULT_PERIOD_DAYS = 30
 
 
 async def parse_upload(upload_id: uuid.UUID, store_id: uuid.UUID, db: AsyncSession) -> UploadedReport:
@@ -98,6 +106,51 @@ async def parse_upload(upload_id: uuid.UUID, store_id: uuid.UUID, db: AsyncSessi
             for row in rows
         ]
         db.add_all(sale_objects)
+
+        # ── 4b. Preserve the reporting period (Phase 22) ───────────────────────
+        # Everything velocity-based (weeks of supply, reorder urgency, turnover,
+        # ROI windows) divides by this. Falling back to 30 days is flagged as
+        # estimated so the UI never implies a precision we don't have.
+        upload.period_start = getattr(parser, "period_start", None)
+        upload.period_end = getattr(parser, "period_end", None)
+        if upload.period_start and upload.period_end:
+            upload.period_days = max(1, (upload.period_end - upload.period_start).days + 1)
+            upload.period_estimated = False
+        else:
+            upload.period_days = DEFAULT_PERIOD_DAYS
+            upload.period_estimated = True
+
+        # ── 4c. Supersede any earlier report covering the SAME period ──────────
+        # A monthly summary is a statement of one period, not a batch of new
+        # sales. Re-uploading July appended a second full copy of July, so every
+        # store-wide total silently doubled: the revenue trend peaked at $220k
+        # for a store whose July revenue was $66,753, because the same month had
+        # been loaded six times.
+        #
+        # The rows go, the UploadedReport row stays — the file is still on disk
+        # and the upload history stays honest about what was submitted.
+        if upload.period_start and upload.period_end:
+            superseded = (await db.execute(
+                select(UploadedReport.id).where(
+                    UploadedReport.store_id == store_id,
+                    UploadedReport.id != upload_id,
+                    UploadedReport.status == ReportStatus.COMPLETED,
+                    UploadedReport.period_start == upload.period_start,
+                    UploadedReport.period_end == upload.period_end,
+                )
+            )).scalars().all()
+
+            if superseded:
+                removed = (await db.execute(
+                    delete(NormalizedSale).where(
+                        NormalizedSale.store_id == store_id,
+                        NormalizedSale.upload_id.in_(superseded),
+                    )
+                )).rowcount
+                logger.info(
+                    "Superseded %d earlier report(s) for %s→%s: removed %s duplicate rows",
+                    len(superseded), upload.period_start, upload.period_end, removed,
+                )
 
         # ── 5. Mark as completed ───────────────────────────────────────────────
         upload.status = ReportStatus.COMPLETED

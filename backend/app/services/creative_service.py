@@ -134,6 +134,51 @@ Respond with valid JSON EXACTLY:
 }"""
 
 
+def _choose_hero(strategy, offer_override: str | None) -> str | None:
+    """
+    Which bottle the ad should show.
+
+    Not simply products_to_promote[0]. When the offer names one of the promoted
+    products — "…get Lamarca Prosecco for $14.99" — THAT is the bottle the
+    price belongs to, and showing any other bottle beside that price advertises
+    a price the store doesn't offer. Falls back to the first promoted product
+    when the offer names none of them.
+    """
+    from app.services import design_plan as dp
+
+    products = [str(p) for p in (strategy.products_to_promote or [])]
+    offer = (offer_override or "").strip() or (strategy.recommended_offer or "")
+    return dp.find_offer_subject(offer, products) or (products[0] if products else None)
+
+
+async def _known_unit_price(store_id, product_name: str, db) -> float | None:
+    """
+    What the POS says this product last sold for.
+
+    Used ONLY to reject an advertised price that cannot belong to this bottle.
+    Never used to fill one in: the store sets its own prices, and a figure the
+    owner didn't approve has no business on his advertising.
+    """
+    try:
+        from sqlalchemy import select
+
+        from app.models.normalized_sale import NormalizedSale
+
+        row = (await db.execute(
+            select(NormalizedSale.unit_price)
+            .where(NormalizedSale.store_id == store_id,
+                   NormalizedSale.product_name.ilike(product_name),
+                   NormalizedSale.unit_price.isnot(None))
+            .order_by(NormalizedSale.sale_date.desc().nulls_last())
+            .limit(1)
+        )).scalars().first()
+        return float(row) if row else None
+    except Exception:  # noqa: BLE001 — a missing price must never block an ad
+        logger.warning("Could not look up a reference price for %s", product_name,
+                       exc_info=True)
+        return None
+
+
 def _strip_internal_numbers(offer: str) -> str:
     """
     Remove owner-only clauses (margin/cost/profit) from the offer before it can
@@ -273,7 +318,7 @@ async def generate_ad_creative(
     )
     _validate_creative(ai_data)
 
-    hero_name = (strategy.products_to_promote or [None])[0]
+    hero_name = _choose_hero(strategy, offer_override)
 
     # Auto-use the hero product's saved library photo ("upload once, reuse forever")
     if not product_image_url and hero_name:
@@ -297,12 +342,19 @@ async def generate_ad_creative(
 
     # Validate the AI design plan deterministically, then compose the image prompt.
     from app.services import design_plan as dp
-    hero = (strategy.products_to_promote or ["the promoted bottle"])[0]
+    hero = hero_name or "the promoted bottle"
     base_offer = offer_override.strip() if offer_override and offer_override.strip() else strategy.recommended_offer
     customer_offer = _strip_internal_numbers(base_offer)
+
+    # What the POS says this bottle actually sells for. Used only to reject a
+    # price that clearly belongs to a different product — never to invent one.
+    known_price = await _known_unit_price(store_id, str(hero), db) if hero_name else None
+
     plan = dp.validate_design_plan(
         ai_data["design_plan"], str(hero), customer_offer, product_facts,
         campaign_type=campaign_type, owner_wants_details=show_product_details,
+        promoted_products=list(strategy.products_to_promote or []),
+        known_unit_price=known_price,
     )
     # The AI paints the SCENE + PRODUCT only: no text, no badges. Text is typeset
     # below by Pillow so it is never cropped and the price is always exact.

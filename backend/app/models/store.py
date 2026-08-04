@@ -13,7 +13,7 @@ Design note:
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, String, Text
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -66,6 +66,20 @@ class Store(Base):
     )
 
     # ── Status ────────────────────────────────────────────────────────────────
+    # ── Gross margin (Phase 22b) ──────────────────────────────────────────────
+    # The POS export carries SELLING prices only, so every inventory figure is
+    # computed at retail. Retail is not what the owner spent: $220,661 of slow
+    # stock is roughly $154,000 of actual cash at a 30% margin. Labelling a
+    # retail figure "cash frozen" overstates his exposure by his entire margin.
+    #
+    # NULLABLE ON PURPOSE. When it is unset the dashboard says "retail value"
+    # and shows no cost figure at all, rather than inventing one from an
+    # industry average and presenting it as his.
+    gross_margin_pct: Mapped[int | None] = mapped_column(
+        Integer, nullable=True,
+        comment="Gross margin %, owner-supplied. NULL = show retail only.",
+    )
+
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
     # ── Timestamps ────────────────────────────────────────────────────────────

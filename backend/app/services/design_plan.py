@@ -118,6 +118,113 @@ def is_amount(token: str) -> bool:
     return bool(token) and token.startswith("$")
 
 
+# An offer whose price is CONDITIONAL on buying something else. The price in
+# these sentences belongs to a reward product, not to whatever bottle happens
+# to be first in the promoted list.
+CONDITIONAL_OFFER_RE = re.compile(
+    r"\bbuy\s+\w+\s+.*\bget\b"          # "buy any 2 of the spirits, get X"
+    r"|\bwith\s+(?:the\s+)?purchase\b"  # "with purchase of ..."
+    r"|\bwhen\s+you\s+buy\b"
+    r"|\bmix\s+and\s+match\b"
+    r"|\bfree\b",
+    re.I,
+)
+
+
+def is_conditional_offer(offer: str) -> bool:
+    """
+    True when the price only applies if the customer buys something else first.
+
+    This matters because the ad shows ONE bottle with ONE price. Printing
+    "AT $14.99" beside a bottle whose price is conditional states a price the
+    store does not actually offer for that bottle on its own.
+    """
+    return bool(CONDITIONAL_OFFER_RE.search(offer or ""))
+
+
+BUY_QTY_RE = re.compile(r"\bbuy\s+(?:any\s+)?(\d+)", re.I)
+
+
+def condense_conditional(offer: str) -> str:
+    """
+    A short, TRUE line for a conditional deal.
+
+    Suppressing the price entirely would leave the slot showing a chopped
+    sentence ("Buy any 2 of the sele…"), which was the original complaint about
+    these ads. "BUY 2, GET $14.99" fits, states the condition, and cannot be
+    read as a flat price for the bottle on its own.
+    """
+    price = extract_price(offer)
+    quantity = BUY_QTY_RE.search(offer or "")
+    if quantity and price:
+        return f"BUY {quantity.group(1)}, GET {price}"
+    if quantity:
+        return f"BUY {quantity.group(1)} & SAVE"
+    if price:
+        return f"{price} WITH PURCHASE"
+    return ""
+
+
+def _normalise(name: str) -> str:
+    return re.sub(r"[^a-z0-9 ]+", " ", (name or "").lower())
+
+
+def find_offer_subject(offer: str, products: list[str]) -> str | None:
+    """
+    Which promoted product the offer's price actually refers to.
+
+    "Buy any 2 of the selected spirits, get Lamarca Prosecco for $14.99" prices
+    the PROSECCO. Returning it lets the caller either make it the hero or
+    suppress the price on a different hero — instead of stamping $14.99 onto
+    Tito's, whose real shelf price is twice that.
+
+    Matching is on the distinctive words of the product name (brand + varietal),
+    ignoring sizes and units, so "Lamarca Prosecco 750ml" is found in a sentence
+    that writes it as "Lamarca Prosecco".
+    """
+    haystack = _normalise(offer)
+    if not haystack:
+        return None
+
+    best, best_score = None, 0
+    for product in products or []:
+        tokens = [t for t in _normalise(product).split()
+                  if len(t) > 2 and not re.fullmatch(r"\d+|\d*(ml|l|oz|lt|pk|yr)", t)]
+        # EVERY distinctive word must appear, and there must be at least two of
+        # them. "Cab Sauv" is shared by two different wines in one campaign, so
+        # a partial match would attribute a price to whichever was listed
+        # first — the same class of error this function exists to prevent.
+        # Failing to match is safe: the caller then suppresses the price.
+        if len(tokens) < 2 or not all(t in haystack for t in tokens):
+            continue
+        if len(tokens) > best_score:
+            best, best_score = product, len(tokens)
+    return best
+
+
+def price_is_plausible(price_token: str, known_unit_price: float | None,
+                       floor_ratio: float = 0.5) -> bool:
+    """
+    Sanity-check an advertised price against what the POS says the product sells
+    for. A promotion discounts a price; it does not divide it by three.
+
+    Returns True when we have nothing to compare against — this guard exists to
+    catch a price attributed to the WRONG PRODUCT, not to police genuine deals.
+    """
+    if not known_unit_price or known_unit_price <= 0:
+        return True
+    if not price_token or not price_token.startswith("$"):
+        return True
+    try:
+        advertised = float(price_token.replace("$", "").replace(",", "").strip())
+    except ValueError:
+        return True
+    if advertised <= 0:
+        return False
+    # Above shelf price is fine (multi-buy totals); far below means wrong product.
+    return advertised >= known_unit_price * floor_ratio
+
+
 def _accent(raw) -> str:
     """
     The AI picks an accent colour to match the scene it art-directed, so the
@@ -159,6 +266,8 @@ def validate_design_plan(
     product_facts: dict | None = None,
     campaign_type: str | None = None,
     owner_wants_details: bool = False,
+    promoted_products: list[str] | None = None,
+    known_unit_price: float | None = None,
 ) -> dict:
     """
     Deterministically clean an AI design plan:
@@ -183,9 +292,32 @@ def validate_design_plan(
     # Offer text is OWNER-controlled and already scrubbed upstream — trust it,
     # but pull out the actual DEAL so the price slot shows "$21.99" rather than
     # a truncated restatement of the product name.
+    #
+    # THE PRICE MUST BELONG TO THE BOTTLE ON THE AD. Previously the hero came
+    # from products_to_promote[0] and the price from the offer sentence, with
+    # nothing checking they referred to the same thing. On a real campaign that
+    # printed "Tito's Handmade Vodka 1.75L — AT $14.99" when $14.99 was the
+    # Prosecco's price in a buy-two-get-one offer and Tito's sells for $29.99.
+    # An advertised price is a promise the store has to honour, so a price we
+    # cannot attribute to the hero is not shown as a price at all.
     offer = (customer_offer or "").strip()
-    out["offer_text"] = extract_price(offer) or _cap(offer, OFFER_MAX)
-    out["offer_is_amount"] = is_amount(out["offer_text"])
+    price = extract_price(offer)
+    conditional = is_conditional_offer(offer)
+
+    if price:
+        subject = find_offer_subject(offer, promoted_products or [])
+        wrong_bottle = bool(
+            subject and hero_product
+            and _normalise(subject) != _normalise(hero_product)
+        )
+        if wrong_bottle or not price_is_plausible(price, known_unit_price):
+            price = ""                              # can't attribute it — drop it
+        elif conditional and is_amount(price):
+            price = condense_conditional(offer)     # true, and states its condition
+
+    out["offer_text"] = price or _cap(offer, OFFER_MAX)
+    # "AT $14.99" is only ever printed for an unconditional amount.
+    out["offer_is_amount"] = is_amount(out["offer_text"]) and not conditional
 
     # Product details — gated. When off, the ad stays clean and minimal.
     details: list[str] = []

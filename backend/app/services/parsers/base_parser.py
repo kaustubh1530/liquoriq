@@ -39,6 +39,12 @@ class BaseParser(ABC):
                      Stored on every NormalizedSale row for analytics.
         """
         self.channel = channel
+        # PHASE 22: the reporting period the file covers, when the format
+        # states it. Callers use the TRUE length instead of assuming a month,
+        # which is what makes velocity and weeks-of-supply correct. Parsers
+        # that can't determine it leave these None and the caller falls back.
+        self.period_start = None
+        self.period_end = None
 
     @abstractmethod
     def parse(self, file_path: str) -> list[dict]:

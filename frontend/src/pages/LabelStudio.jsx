@@ -17,8 +17,10 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useLocation } from 'react-router-dom'
 import { labelStudioApi, assetUrl } from '../api/client'
 import Layout from '../components/Layout'
+import FromActionBanner from '../components/FromActionBanner'
 import LabelCanvas from './labelstudio/LabelCanvas'
 import {
   Tag, Trash2, Save, Printer, Download, Loader2, Search, Check, Bookmark,
@@ -50,6 +52,27 @@ export default function LabelStudio() {
   const [perPage, setPerPage] = useState(4)
   const [page, setPage] = useState('a4')
   const [orientation, setOrientation] = useState('landscape')
+  const [incoming, setIncoming] = useState(null)  // the dashboard action we came from
+
+  /**
+   * Arriving from a bundle or upsell recommendation. The products it named are
+   * dropped into the search box, so the list below is already narrowed to the
+   * bottles the owner came here to make labels for instead of all 1,400.
+   *
+   * Only the FIRST name is used as the query — the search filters one term,
+   * and the banner shows the rest so nothing is silently lost.
+   */
+  const location = useLocation()
+  const applied = useRef(false)
+
+  useEffect(() => {
+    const from = location.state?.fromAction
+    if (!from || applied.current) return
+    applied.current = true
+    setIncoming(from)
+    const first = (from.products ?? [])[0]
+    if (first) setProductQuery(first)
+  }, [location.state])
   const [repeat, setRepeat] = useState(false)
   const [cutMarks, setCutMarks] = useState(true)
   const [sheetImg, setSheetImg] = useState('')
@@ -291,6 +314,8 @@ export default function LabelStudio() {
   return (
     <Layout>
       <div className="max-w-6xl mx-auto">
+        <FromActionBanner action={incoming} onDismiss={() => setIncoming(null)} />
+
         <div className="flex items-start justify-between gap-4 flex-wrap mb-5">
           <div>
             <h1 className="text-2xl font-bold text-gray-900 mb-1 flex items-center gap-2">

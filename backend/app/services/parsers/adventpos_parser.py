@@ -158,16 +158,27 @@ class AdvEntPOSParser(BaseParser):
         # ── Report period from the letterhead (rows above the header) ─────────
         # All rows get sale_date = period END (weekly exports recommended so
         # ROI windows stay granular).
+        #
+        # PHASE 22: the START date was already being matched by the regex and
+        # thrown away. It is now kept on the parser instance so callers can use
+        # the TRUE period length instead of assuming ~4.3 weeks — which decides
+        # velocity, weeks-of-supply, reorder urgency and turnover. Assignment
+        # only; the row-parsing path below is unchanged.
+        period_start: date | None = None
         period_end: date | None = None
         for idx in range(header_idx):
             for v in raw.iloc[idx]:
                 if isinstance(v, str) and (m := _PERIOD_RE.search(v)):
+                    period_start = _parse_date(m.group(1))
                     period_end = _parse_date(m.group(2))
                     break
             if period_end:
                 break
         if period_end is None:
             logger.warning("Summary report: no 'From ... To ...' period found — sale_date will be NULL")
+
+        self.period_start = period_start
+        self.period_end = period_end
 
         # ── Walk rows: merge wrapped names, skip page headers/footers ─────────
         def cell(row, key):
