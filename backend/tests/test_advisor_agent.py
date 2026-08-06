@@ -582,3 +582,76 @@ def test_inventory_results_declare_how_they_are_ranked():
     source = inspect.getsource(TOOLS.inventory_intelligence)
     assert "ranked_by" in source
     assert "cash_frozen" in source and "money_at_stake" in source
+
+
+# ── The Ad Creator handoff must keep its subject ─────────────────────────────
+
+def test_the_ad_link_carries_the_strategy_it_is_about():
+    """
+    THE BUG: "Create ad" linked to a bare /creative, so the Ad Creator opened
+    on whatever campaign was selected last and the owner had to re-pick the one
+    the advisor had just named. A handoff that drops its subject is a menu item
+    with extra steps.
+    """
+    out = NEXT.derive([{"tool": "ai_strategies", "ok": True}], "",
+                      strategy_id="abc-123")
+    ad = next(a for a in out if a["kind"] == "ad")
+    assert ad["route"] == "/creative?strategy=abc-123"
+
+
+def test_campaign_links_carry_the_strategy_too():
+    out = NEXT.derive([{"tool": "ai_strategies", "ok": True}], "",
+                      strategy_id="abc-123")
+    campaign = next(a for a in out if a["kind"] == "campaign")
+    assert "strategy=abc-123" in campaign["route"]
+
+
+def test_an_existing_query_string_is_preserved():
+    """/ai?focus=clearance must become ?focus=clearance&strategy=…, not break."""
+    out = NEXT.derive([], "I'd run a clearance", strategy_id="abc-123")
+    route = out[0]["route"]
+    assert "focus=clearance" in route and "strategy=abc-123" in route
+    assert route.count("?") == 1
+
+
+def test_links_that_are_not_about_a_campaign_are_left_alone():
+    out = NEXT.derive([{"tool": "customer_segments", "ok": True}], "",
+                      strategy_id="abc-123")
+    customers = next(a for a in out if a["kind"] == "customers")
+    assert customers["route"] == "/customers"
+
+
+def test_no_strategy_means_the_plain_route():
+    out = NEXT.derive([{"tool": "ai_strategies", "ok": True}], "")
+    assert all("strategy=" not in a["route"] for a in out)
+
+
+def test_the_strategies_tool_returns_the_id():
+    """Without the id there is nothing to link to."""
+    import inspect
+    source = inspect.getsource(TOOLS.ai_strategies)
+    assert '"id": str(s.id)' in source
+
+
+def test_the_agent_captures_the_strategy_from_a_tool_result():
+    assert AGENT._strategy_from(
+        {"strategies": [{"id": "newest-1"}, {"id": "older-2"}]}) == "newest-1"
+    assert AGENT._strategy_from({"strategies": []}) is None
+    assert AGENT._strategy_from({"categories": []}) is None
+    assert AGENT._strategy_from("not a dict") is None
+
+
+def test_the_strategy_reaches_the_answer(monkeypatch):
+    """End to end through the loop: tool result → captured id → button route."""
+    async def fake_tool(store_id, db, **kw):
+        return {"strategies": [{"id": "labor-day-99", "title": "Labor Day"}]}
+    monkeypatch.setitem(TOOLS.REGISTRY, "ai_strategies",
+                        {**TOOLS.REGISTRY["ai_strategies"], "fn": fake_tool})
+
+    fake = caller_returning(wants("ai_strategies"),
+                            text("Make an advertisement for it."))
+    out = _run(AGENT.ask("Should I advertise Labor Day?", CONTEXT, "store", None,
+                         caller=fake))
+
+    assert out["strategy_id"] == "labor-day-99"
+    assert any("strategy=labor-day-99" in a["route"] for a in out["next_actions"])

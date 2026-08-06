@@ -50,12 +50,27 @@ function CopyBox({ label, text }) {
 }
 
 export default function Creative() {
-  const [searchParams] = useSearchParams()
+  const [searchParams, setSearchParams] = useSearchParams()
   const navigate = useNavigate()
   const preselected = searchParams.get('strategy')
 
   const [strategies, setStrategies] = useState([])
-  const [selectedId, setSelectedId] = useState(preselected ?? '')
+  // Fallback used only until the list loads and only when the URL names nothing.
+  const [fallbackId, setFallbackId] = useState('')
+
+  /**
+   * THE URL IS THE SELECTION.
+   *
+   * Previously the strategy lived in component state seeded from the query
+   * string. React Router reuses this component, so arriving from the AI
+   * Advisor with a different ?strategy= did not re-run the initialiser and the
+   * page kept showing the PREVIOUS campaign and its ad — the owner had to
+   * re-pick the strategy the advisor had just named.
+   *
+   * Deriving it instead means the URL and the screen cannot disagree, a
+   * refresh restores the same campaign, and the back button behaves.
+   */
+  const selectedId = preselected || fallbackId
   const [creative, setCreative] = useState(null)
   const [offer, setOffer] = useState('')          // exact promo price/offer to render
   const [instructions, setInstructions] = useState('')  // owner art-direction hints
@@ -73,6 +88,17 @@ export default function Creative() {
   const [generating, setGenerating] = useState(false)
   const [error, setError] = useState('')
 
+  // PHASE 23.6 — the campaign context, and the fields the owner has edited.
+  //
+  // `touched` is the whole "preserve edits" mechanism: auto-fill writes a field
+  // only if it is not in this set. Without it, coming back to the page would
+  // silently overwrite a price the owner had just corrected — which is worse
+  // than never auto-filling at all, because he would not notice.
+  const [context, setContext] = useState(null)
+  const [touched, setTouched] = useState(() => new Set())
+  const markTouched = (field) =>
+    setTouched((prev) => (prev.has(field) ? prev : new Set(prev).add(field)))
+
   // Details are automatic for product-led campaigns; the toggle is the manual opt-in
   const autoDetails = CAMPAIGN_TYPES.find((c) => c.v === campaignType)?.details ?? false
   const detailsOn = autoDetails || wantDetails
@@ -83,7 +109,7 @@ export default function Creative() {
       try {
         const { data } = await aiApi.list()
         setStrategies(data)
-        if (!preselected && data.length > 0) setSelectedId(data[0].id)
+        if (!preselected && data.length > 0) setFallbackId(data[0].id)
       } catch {
         // empty state shown below
       } finally {
@@ -92,15 +118,23 @@ export default function Creative() {
     })()
   }, [preselected])
 
+
   const selectedStrategy = strategies.find((s) => s.id === selectedId)
   const heroProduct = selectedStrategy?.products_to_promote?.[0] ?? ''
 
   // When the selected strategy changes, fetch its latest creative (404 = none yet)
   useEffect(() => {
     if (!selectedId) return
+    // Clear everything belonging to the previous strategy BEFORE fetching, so
+    // a slow request can never leave the last campaign's ad on screen next to
+    // the new campaign's name.
     setCreative(null)
     setError('')
     setProductUrl('')
+    setOffer('')
+    setInstructions('')
+    // A different campaign is a different form: edits belonged to the old one.
+    setTouched(new Set())
     ;(async () => {
       try {
         const { data } = await creativeApi.get(selectedId)
@@ -109,6 +143,51 @@ export default function Creative() {
         // 404 — no creative yet, fine
       }
     })()
+  }, [selectedId])
+
+  /**
+   * Pull the campaign context and fill the form from it.
+   *
+   * The owner already told the advisor what campaign to run. Asking him to
+   * describe it again — type, layout, offer, look and feel — is the system
+   * forgetting a conversation it just had.
+   *
+   * Every write is guarded by `touched`, so an edit survives navigating away
+   * and coming back. Auto-fill happens once per field, not once per render.
+   */
+  useEffect(() => {
+    if (!selectedId) { setContext(null); return }
+    let cancelled = false
+
+    creativeApi.campaignContext(selectedId)
+      .then(({ data }) => {
+        if (cancelled) return
+        setContext(data)
+        const pre = data.prefill ?? {}
+
+        // Each of these is "fill it in unless he has already touched it".
+        if (!touched.has('offer') && pre.offer) setOffer(pre.offer)
+        if (!touched.has('instructions') && pre.instructions) setInstructions(pre.instructions)
+        if (!touched.has('campaignType') && pre.campaign_type) setCampaignType(pre.campaign_type)
+        if (!touched.has('layout') && pre.layout) setLayout(pre.layout)
+        if (!touched.has('format') && pre.image_format) setFormat(pre.image_format)
+        if (!touched.has('category') && pre.category) setCategory(pre.category)
+        if (!touched.has('productUrl') && pre.product_url) setProductUrl(pre.product_url)
+        if (!touched.has('facts') && pre.facts && Object.keys(pre.facts).length) {
+          setFactsText(Object.entries(pre.facts).map(([k, v]) => `${k}: ${v}`).join('\n'))
+        }
+        // Only open the details panel when there is something to put in it.
+        if (!touched.has('details') && pre.show_details) {
+          setWantDetails(true)
+          setShowFacts(true)
+        }
+      })
+      .catch(() => { /* no context — the form stays manual, which still works */ })
+
+    return () => { cancelled = true }
+    // `touched` is deliberately NOT a dependency: re-running on every edit
+    // would re-fill the fields the owner is in the middle of changing.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedId])
 
   // Load the saved library photo + facts for the hero product (reused each time)
@@ -218,7 +297,7 @@ export default function Creative() {
                   <label className="block text-xs font-medium text-gray-500 mb-1">Campaign</label>
                   <select
                     value={selectedId}
-                    onChange={(e) => setSelectedId(e.target.value)}
+                    onChange={(e) => setSearchParams({ strategy: e.target.value })}
                     className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
                   >
                     {strategies.map((s) => (
@@ -233,7 +312,7 @@ export default function Creative() {
                   <input
                     type="text"
                     value={offer}
-                    onChange={(e) => setOffer(e.target.value)}
+                    onChange={(e) => { markTouched('offer'); setOffer(e.target.value) }}
                     placeholder="$69.99 · 20% OFF · BOGO"
                     className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
                   />
@@ -245,7 +324,7 @@ export default function Creative() {
                 <label className="block text-xs font-medium text-gray-500 mb-1">Campaign type</label>
                 <select
                   value={campaignType}
-                  onChange={(e) => setCampaignType(e.target.value)}
+                  onChange={(e) => { markTouched('campaignType'); setCampaignType(e.target.value) }}
                   className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
                 >
                   {CAMPAIGN_TYPES.map((c) => (
@@ -270,7 +349,7 @@ export default function Creative() {
                     { v: 'rail', label: 'Side column' },
                     { v: 'banner', label: 'Top banner' },
                   ].map((l) => (
-                    <button key={l.v} onClick={() => setLayout(l.v)}
+                    <button key={l.v} onClick={() => { markTouched('layout'); setLayout(l.v) }}
                       className={`px-3.5 py-1.5 transition-colors ${
                         layout === l.v ? 'bg-brand-500 text-white' : 'bg-white text-gray-500 hover:bg-gray-50'
                       }`}>
@@ -292,7 +371,7 @@ export default function Creative() {
                     { v: 'portrait', label: 'Portrait' },
                     { v: 'landscape', label: 'Landscape' },
                   ].map((f) => (
-                    <button key={f.v} onClick={() => setFormat(f.v)}
+                    <button key={f.v} onClick={() => { markTouched('format'); setFormat(f.v) }}
                       className={`px-3.5 py-1.5 transition-colors ${
                         format === f.v ? 'bg-brand-500 text-white' : 'bg-white text-gray-500 hover:bg-gray-50'
                       }`}>
@@ -329,14 +408,14 @@ export default function Creative() {
                   <div className="mt-2 space-y-2">
                     <label className="flex items-center gap-2 text-xs text-gray-600">
                       <input type="checkbox" checked={detailsOn} disabled={autoDetails}
-                        onChange={(e) => setWantDetails(e.target.checked)} />
+                        onChange={(e) => { markTouched('details'); setWantDetails(e.target.checked) }} />
                       Show product details on the advertisement
                       {autoDetails && <span className="text-gray-400">(always on for {CAMPAIGN_TYPES.find((c) => c.v === campaignType)?.label.toLowerCase()})</span>}
                     </label>
-                    <input value={category} onChange={(e) => setCategory(e.target.value)}
+                    <input value={category} onChange={(e) => { markTouched('category'); setCategory(e.target.value) }}
                       placeholder="Category (e.g. Whiskey, Wine, Tequila)"
                       className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500" />
-                    <textarea value={factsText} onChange={(e) => setFactsText(e.target.value)}
+                    <textarea value={factsText} onChange={(e) => { markTouched('facts'); setFactsText(e.target.value) }}
                       rows={4}
                       placeholder={"One fact per line, as label: value —\nproof: 90 proof\nage: aged 12 years\norigin: Lynchburg, Tennessee\ntasting notes: caramel, oak, vanilla"}
                       className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-brand-500 resize-none" />
@@ -356,7 +435,7 @@ export default function Creative() {
                 {showMore && (
                   <textarea
                     value={instructions}
-                    onChange={(e) => setInstructions(e.target.value)}
+                    onChange={(e) => { markTouched('instructions'); setInstructions(e.target.value) }}
                     rows={2}
                     placeholder="e.g. Christmas theme with snow & a fireplace. Bigger price tag. Cocktail beside the bottle."
                     className="mt-2 w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500 resize-none"
@@ -382,6 +461,52 @@ export default function Creative() {
             <p className="text-3xl mb-3 animate-pulse">🎨</p>
             <p className="text-gray-600 font-medium">Designing your ad…</p>
             <p className="text-gray-400 text-sm mt-1">Rendering a festive, ready-to-post image — up to a minute.</p>
+          </div>
+        )}
+
+        {/* THE HANDOFF, MADE VISIBLE.
+            The owner has just been told what campaign to run. Showing him the
+            same campaign here — goal, occasion, audience, offer — is what makes
+            this feel like the next step in one conversation rather than a
+            separate tool that happens to be open. */}
+        {context && preselected && !generating && (
+          <div className="bg-brand-50/50 ring-1 ring-brand-200 rounded-2xl p-5 mb-6">
+            <div className="flex items-start justify-between gap-4 flex-wrap">
+              <div className="min-w-0">
+                <p className="text-[11px] font-semibold text-brand-700 uppercase tracking-wide">
+                  This advertisement is based on your AI recommendation
+                </p>
+                <h3 className="text-base font-bold text-gray-900 mt-1">
+                  {context.summary.campaign}
+                </h3>
+              </div>
+              {!creative && (
+                <span className="text-[11px] font-semibold px-3 py-1.5 rounded-full bg-white text-brand-700 ring-1 ring-brand-200 shrink-0">
+                  Ready to generate
+                </span>
+              )}
+            </div>
+
+            <div className="grid sm:grid-cols-2 gap-x-6 gap-y-2.5 mt-4">
+              {[
+                ['Goal', context.summary.goal],
+                ['Occasion', context.summary.occasion],
+                ['Target audience', context.summary.audience],
+                ['Recommended offer', context.summary.offer],
+                ['Primary product', context.summary.primary_product],
+                ['Expected outcome', context.summary.expected_outcome],
+              ].filter(([, v]) => v).map(([label, value]) => (
+                <div key={label} className="min-w-0">
+                  <p className="text-[10px] text-gray-400 uppercase tracking-wide">{label}</p>
+                  <p className="text-[12px] text-gray-800 leading-snug">{value}</p>
+                </div>
+              ))}
+            </div>
+
+            <p className="text-[11px] text-gray-500 mt-4 pt-3 border-t border-brand-200/60">
+              The form below is filled in from this campaign. Change anything you
+              like — your edits are kept.
+            </p>
           </div>
         )}
 

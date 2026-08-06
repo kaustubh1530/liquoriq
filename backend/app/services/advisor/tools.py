@@ -182,6 +182,10 @@ async def ai_strategies(store_id, db, limit: int = 5):
 
     return {"strategies": [
         {
+            # The ID is what makes a recommendation actionable: without it the
+            # "Create ad" button can only open a blank Ad Creator and ask the
+            # owner to re-pick the strategy the advisor just named.
+            "id": str(s.id),
             "title": s.strategy_title,
             "created_at": str(s.created_at),
             "occasion": s.occasion,

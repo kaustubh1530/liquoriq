@@ -113,6 +113,9 @@ async def ask(question: str, base_context: dict, store_id, db,
                          knowledge.get("prompt_block", ""))
     schema = TOOLS.openai_schema()
     used: list[dict] = []
+    # The campaign this answer is about, if the advisor looked one up. Carried
+    # into the Ad Creator link so the handoff keeps its subject.
+    strategy_id: str | None = None
     logger.info("Advisor question received · %d chars · %d prior turns · %d tools",
                 len(question), len(history or []), len(schema))
 
@@ -140,7 +143,8 @@ async def ask(question: str, base_context: dict, store_id, db,
                 "source": "ai",
                 # Derived from what the advisor ACTUALLY looked at, so a button
                 # can never point at a route the model invented.
-                "next_actions": NEXT.derive(used, answer),
+                "next_actions": NEXT.derive(used, answer, strategy_id),
+                "strategy_id": strategy_id,
                 "knowledge_used": knowledge.get("citations", []),
             }
 
@@ -162,6 +166,8 @@ async def ask(question: str, base_context: dict, store_id, db,
         for call in calls:
             result = await TOOLS.execute(call["name"], call["arguments"], store_id, db)
             ok = "error" not in result
+            if strategy_id is None:
+                strategy_id = _strategy_from(result)
             logger.info("Advisor tool %s(%s) -> %s",
                         call["name"], call["arguments"],
                         "ok" if ok else result.get("error"))
@@ -180,7 +186,8 @@ async def ask(question: str, base_context: dict, store_id, db,
         answer = final.get("content") or FALLBACK
         return {"answer": answer, "tools_used": used,
                 "rounds": MAX_TOOL_ROUNDS, "source": "ai",
-                "next_actions": NEXT.derive(used, answer),
+                "next_actions": NEXT.derive(used, answer, strategy_id),
+                "strategy_id": strategy_id,
                 "knowledge_used": knowledge.get("citations", [])}
     except Exception as exc:  # noqa: BLE001
         logger.error("Advisor could not close out after tool rounds · %s: %s",
@@ -262,6 +269,8 @@ async def generate_brief(base_context: dict, store_id, db, caller=None) -> dict:
         for call in calls:
             result = await TOOLS.execute(call["name"], call["arguments"], store_id, db)
             ok = "error" not in result
+            if strategy_id is None:
+                strategy_id = _strategy_from(result)
             logger.info("Advisor tool %s(%s) -> %s",
                         call["name"], call["arguments"],
                         "ok" if ok else result.get("error"))
@@ -273,6 +282,21 @@ async def generate_brief(base_context: dict, store_id, db, caller=None) -> dict:
 
     return {"answer": _deterministic_brief(base_context, found), "tools_used": used,
             "rounds": 2, "source": "deterministic", "signals": found}
+
+
+def _strategy_from(result: dict) -> str | None:
+    """
+    The most recent strategy id in a tool result, if there is one.
+
+    Newest first because ai_strategies returns them in that order — the advisor
+    talking about "your Labor Day campaign" almost always means the latest one.
+    """
+    if not isinstance(result, dict):
+        return None
+    for row in (result.get("strategies") or []):
+        if isinstance(row, dict) and row.get("id"):
+            return str(row["id"])
+    return None
 
 
 def _deterministic_brief(ctx: dict, signals: list[dict] | None = None) -> str:

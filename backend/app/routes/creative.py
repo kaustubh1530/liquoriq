@@ -222,3 +222,47 @@ async def get_creative(
             detail="No creative generated for this strategy yet",
         )
     return creative
+
+
+# ── PHASE 23.6: the campaign context ─────────────────────────────────────────
+
+@router.get(
+    "/campaign-context/{strategy_id}",
+    summary="Everything a downstream tool needs to act on one campaign",
+)
+async def campaign_context(
+    strategy_id: uuid.UUID,
+    current_store: Annotated[Store, Depends(get_current_store)],
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """
+    ONE campaign, understood once, read by every tool that acts on it.
+
+    The Ad Creator is the first consumer. Label Studio, the scheduler, social
+    posting, SMS and email are the next, and none of them will re-derive any
+    of this — if each page inferred its own campaign type, the ad would
+    eventually say "Premium Collection" while the shelf label said "Standard"
+    for the same campaign.
+
+    Everything is derived deterministically from the strategy plus facts the
+    owner has already confirmed. No GPT call: this page should feel instant,
+    and a model here would add seconds to a form that is meant to be already
+    filled in.
+    """
+    from sqlalchemy import select
+
+    from app.models.ai_strategy_report import AIStrategyReport
+    from app.services import campaign_context as CTX
+
+    strategy = (await db.execute(
+        select(AIStrategyReport).where(
+            AIStrategyReport.id == strategy_id,
+            AIStrategyReport.store_id == current_store.id,
+        )
+    )).scalar_one_or_none()
+
+    if strategy is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND,
+                            detail="That campaign does not exist.")
+
+    return await CTX.build(strategy, current_store.id, db)

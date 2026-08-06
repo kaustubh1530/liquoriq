@@ -255,6 +255,9 @@ export const creativeApi = {
   // The saved library photo for a product (null if none on file)
   getProductPhoto: (productName) => api.get('/creative/product-photo', { params: { product_name: productName } }),
   // Reusable owner-confirmed product facts (grounding — never invented by AI)
+  // PHASE 23.6: everything derivable about one campaign, in one call. Every
+  // downstream tool reads this rather than re-inferring its own version.
+  campaignContext: (strategyId) => api.get(`/creative/campaign-context/${strategyId}`),
   getFacts: (productName) => api.get('/creative/product-facts', { params: { product_name: productName } }),
   saveFacts: (productName, category, facts) => api.post('/creative/product-facts', { product_name: productName, category, facts }),
   // Latest creative for a strategy — 404 if none generated yet

@@ -195,6 +195,7 @@ async def ask(
         "source": result["source"],
         # Workflow buttons, derived from the tools the advisor actually used.
         "next_actions": result.get("next_actions", []),
+        "strategy_id": result.get("strategy_id"),
         # Which playbooks were retrieved and which business rules fired.
         # Observed during execution, exactly like tools_used.
         "knowledge_used": result.get("knowledge_used", []),

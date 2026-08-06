@@ -87,12 +87,18 @@ BY_INTENT = [
 MAX_ACTIONS = 3
 
 
-def derive(tools_used: list[dict], answer: str = "") -> list[dict]:
+def derive(tools_used: list[dict], answer: str = "",
+           strategy_id: str | None = None) -> list[dict]:
     """
     The buttons to show under one answer, most relevant first, de-duplicated.
 
     Capped at three: a row of six buttons is a menu, and a menu is what the
     owner came here to avoid.
+
+    `strategy_id` — when the advisor looked at a specific campaign, the Ad
+    Creator link carries it, so the page opens ON that strategy rather than on
+    whatever was selected last. A handoff that drops its subject is not a
+    handoff; it is a menu item with extra steps.
     """
     picked: list[dict] = []
     seen: set[str] = set()
@@ -120,4 +126,26 @@ def derive(tools_used: list[dict], answer: str = "") -> list[dict]:
         for action in DEFAULT:
             add(action)
 
+    # Attach the strategy to anything that acts ON a strategy. Done here rather
+    # than in the tables so every route that needs it gets it, including the
+    # intent-derived ones.
+    if strategy_id:
+        picked = [
+            {**a, "route": _with_strategy(a["route"], strategy_id)}
+            if a["kind"] in STRATEGY_SCOPED else a
+            for a in picked
+        ]
+
     return picked[:MAX_ACTIONS]
+
+
+# Workflows that operate on one campaign, and therefore need to know which.
+STRATEGY_SCOPED = {"ad", "campaign"}
+
+
+def _with_strategy(route: str, strategy_id: str) -> str:
+    """Append ?strategy=<id>, preserving any query string already there."""
+    if "strategy=" in route:
+        return route
+    separator = "&" if "?" in route else "?"
+    return f"{route}{separator}strategy={strategy_id}"
