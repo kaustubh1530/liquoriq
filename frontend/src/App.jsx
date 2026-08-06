@@ -4,6 +4,11 @@ import ProtectedRoute from './components/ProtectedRoute'
 import Login from './pages/Login'
 import Register from './pages/Register'
 import Dashboard from './pages/Dashboard'
+// Drill-downs: the dashboard stays scannable, the detail lives here.
+import InventoryIntelligence from './pages/InventoryIntelligence'
+import CategoryIntelligence from './pages/CategoryIntelligence'
+import BusinessIntelligence from './pages/BusinessIntelligence'
+import AIAdvisor from './pages/AIAdvisor'
 import Uploads from './pages/Uploads'
 import AIStrategy from './pages/AIStrategy'
 import Creative from './pages/Creative'
@@ -22,6 +27,10 @@ export default function App() {
 
           {/* Protected */}
           <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
+          <Route path="/advisor"     element={<ProtectedRoute><AIAdvisor /></ProtectedRoute>} />
+          <Route path="/intelligence" element={<ProtectedRoute><BusinessIntelligence /></ProtectedRoute>} />
+          <Route path="/inventory"  element={<ProtectedRoute><InventoryIntelligence /></ProtectedRoute>} />
+          <Route path="/categories" element={<ProtectedRoute><CategoryIntelligence /></ProtectedRoute>} />
           <Route path="/uploads"   element={<ProtectedRoute><Uploads /></ProtectedRoute>} />
           <Route path="/ai"        element={<ProtectedRoute><AIStrategy /></ProtectedRoute>} />
           <Route path="/creative"  element={<ProtectedRoute><Creative /></ProtectedRoute>} />

@@ -6,27 +6,39 @@
 import { NavLink, useNavigate } from 'react-router-dom'
 import {
   LayoutDashboard,
+  Brain,
+  Boxes,
+  BarChart3,
   Upload,
   Sparkles,
   Palette,
   Tag,
   ArrowLeftRight,
   Users,
-  Store,
   LogOut,
 } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
 
+// Ordered by how often an owner needs it, not by how the app was built.
+//
+// Dashboard is the daily driver — it answers "what do I do today". Business
+// Intelligence sits near the bottom on purpose: it is somewhere to SPEND time,
+// not somewhere to start, and putting it high would invite the owner to browse
+// analytics when he came in to do a job.
+//
 // Two distinct products, two distinct nav items: the AI Ad Creator makes the
 // advertisement; Label Studio adds promotional badges on top of one.
 const NAV = [
-  { to: '/dashboard',  label: 'Dashboard',      icon: LayoutDashboard },
-  { to: '/uploads',    label: 'Uploads',         icon: Upload },
-  { to: '/ai',         label: 'AI Strategy',     icon: Sparkles },
-  { to: '/creative',   label: 'AI Ad Creator',   icon: Palette },
-  { to: '/labels',     label: 'Label Studio',    icon: Tag },
-  { to: '/transfers',  label: 'Transfers',       icon: ArrowLeftRight },
-  { to: '/customers',  label: 'Customers',       icon: Users },
+  { to: '/dashboard',    label: 'Dashboard',            icon: LayoutDashboard },
+  { to: '/advisor',      label: 'AI Advisor',           icon: Brain },
+  { to: '/uploads',      label: 'Uploads',              icon: Upload },
+  { to: '/inventory',    label: 'Inventory',            icon: Boxes },
+  { to: '/ai',           label: 'AI Strategy',          icon: Sparkles },
+  { to: '/creative',     label: 'AI Ad Creator',        icon: Palette },
+  { to: '/labels',       label: 'Label Studio',         icon: Tag },
+  { to: '/customers',    label: 'Customers',            icon: Users },
+  { to: '/intelligence', label: 'Business Intelligence', icon: BarChart3 },
+  { to: '/transfers',    label: 'Transfers',            icon: ArrowLeftRight },
 ]
 
 export default function Layout({ children }) {

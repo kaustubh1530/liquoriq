@@ -296,6 +296,22 @@ export const intelligenceApi = {
     }),
 }
 
+// ── PHASE 23: AI Business Advisor ────────────────────────────────────────────
+// An agent, not a chat endpoint: the server assembles store context, lets the
+// model call whatever tools the question needs, and returns the tools that
+// actually ran alongside the answer.
+
+export const advisorApi = {
+  brief: () => api.get('/advisor/brief'),
+  suggestions: () => api.get('/advisor/suggestions'),
+  context: () => api.get('/advisor/context'),
+  ask: (question, conversationId = null) =>
+    api.post('/advisor/ask', { question, conversation_id: conversationId }),
+  conversations: () => api.get('/advisor/conversations'),
+  conversation: (id) => api.get(`/advisor/conversations/${id}`),
+  deleteConversation: (id) => api.delete(`/advisor/conversations/${id}`),
+}
+
 // ── MODULE 2: Label Studio ────────────────────────────────────────────────────
 // Promotional badges only. Never calls the AI; only references a base image URL.
 

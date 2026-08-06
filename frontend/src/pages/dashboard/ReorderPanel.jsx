@@ -58,12 +58,11 @@ function download(filename, text) {
 export default function ReorderPanel({ onClose }) {
   const [data, setData] = useState(null)
   const [horizon, setHorizon] = useState(4)
-  const [loading, setLoading] = useState(true)
+  const [loading, setLoading] = useState(true)   // set by the fetch, never in the effect body
   const [error, setError] = useState('')
 
   useEffect(() => {
     let cancelled = false
-    setLoading(true)
     intelligenceApi.reorderList(horizon)
       .then(({ data: d }) => { if (!cancelled) { setData(d); setError('') } })
       .catch(() => { if (!cancelled) setError('Could not build the reorder list.') })

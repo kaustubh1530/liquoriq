@@ -14,3 +14,5 @@ from app.models.campaign import Campaign, MessageLog  # noqa: F401
 from app.models.product_facts import ProductFacts  # noqa: F401
 from app.models.label_design import LabelDesign  # noqa: F401
 from app.models.product_category import ProductCategory  # noqa: F401
+
+from app.models.advisor_conversation import AdvisorConversation, AdvisorMessage  # noqa: F401,E402

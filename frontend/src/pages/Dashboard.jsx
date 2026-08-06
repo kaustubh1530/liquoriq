@@ -1,85 +1,79 @@
 /**
- * Dashboard.jsx — PHASE 22: BUSINESS CONTROL CENTER
+ * Dashboard.jsx — PHASE 22.5
  *
- * This is not an analytics page. It answers four questions in order, and the
- * layout is that order:
- *      1. How healthy is my business?      → Business Health Score
- *      2. What is costing me money?        → Executive Summary + Cash Frozen
- *      3. What should I do today?          → Action Center
- *      4. What has the highest ROI?        → Growth Opportunities (ranked)
- * Then the supporting detail: inventory distribution, category intelligence,
- * revenue trend and campaign ROI.
+ * THIS PAGE ANSWERS ONE QUESTION: "what should I do today to make more money?"
  *
- * EVERY NUMBER ON THIS PAGE IS COMPUTED DETERMINISTICALLY ON THE SERVER.
- * The AI Advisor inside each action card explains those numbers in business
- * English and is incapable of changing one — an invented figure is rejected
- * server-side and replaced with deterministic text.
+ * Five sections, in the order the owner needs them:
+ *   1. Executive hero    — the number, and the one button
+ *   2. AI Business Coach — biggest problem, why it matters, what to do
+ *   3. Business health   — am I OK?
+ *   4. Top 3 priorities  — the work
+ *   5. Quick snapshot    — the four figures worth glancing at
+ *
+ * EVERYTHING ANALYTICAL MOVED TO /intelligence. Revenue trend, category
+ * ranking, the inventory distribution, growth opportunities, assumptions and
+ * confidence detail are all still there, in a workspace built for exploring
+ * rather than deciding. Nothing was deleted.
+ *
+ * The reason for the split: a dashboard that is also an analytics tool is
+ * neither. Deciding and exploring are different modes — one takes thirty
+ * seconds standing at the till, the other takes twenty minutes at a desk — and
+ * a page that serves both makes the owner do the sorting himself.
+ *
+ * NO CALCULATION HAPPENS HERE. Every figure is rendered from the deterministic
+ * payload; summary.js selects and phrases values already in it.
  */
 
 import { useCallback, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
-  AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
-} from 'recharts'
-import {
-  Boxes, Snowflake, TrendingUp, Info, ArrowRight,
-  Clock, Activity, ChevronDown, ChevronUp,
+  ArrowRight, Sparkles, ListChecks, Upload, Activity, Snowflake, Boxes,
+  PackageX, BarChart3, MessageSquareQuote,
 } from 'lucide-react'
-import { analyticsApi, intelligenceApi } from '../api/client'
+import { intelligenceApi } from '../api/client'
 import Layout from '../components/Layout'
-import HealthScore from './dashboard/HealthScore'
+import { useAuth } from '../context/AuthContext'
 import ActionCard from './dashboard/ActionCard'
 import MarginPrompt from './dashboard/MarginPrompt'
+import {
+  greeting, executiveSummary, reasons, opportunityHeadline, topPriorities,
+  coach, money,
+} from './dashboard/summary'
 
-const money = (n) => `$${Math.round(Number(n) || 0).toLocaleString()}`
-const compact = (n) => {
-  const v = Number(n) || 0
-  return v >= 1000 ? `$${(v / 1000).toFixed(1)}k` : `$${v.toFixed(0)}`
+function Card({ children, className = '' }) {
+  return (
+    <section className={`bg-white rounded-3xl ring-1 ring-slate-200/70 ${className}`}>
+      {children}
+    </section>
+  )
 }
 
-// Worst → best, so the eye lands on the problem first.
-const CLASS_ORDER = ['sold_out', 'dead', 'sleeping', 'overstock', 'heavy',
-                     'healthy', 'reorder', 'critical', 'negative']
-
-const CLASS_META = {
-  negative:  { label: 'Negative count', color: '#a855f7', note: 'Data to fix' },
-  sold_out:  { label: 'Sold out',       color: '#dc2626', note: 'Losing sales' },
-  dead:      { label: 'Dead',           color: '#7f1d1d', note: 'Never moved' },
-  critical:  { label: 'Critical',       color: '#f97316', note: 'Under 1 week' },
-  reorder:   { label: 'Reorder',        color: '#f59e0b', note: 'Under 3 weeks' },
-  healthy:   { label: 'Healthy',        color: '#16a34a', note: '3–12 weeks' },
-  heavy:     { label: 'Heavy',          color: '#a3a3a3', note: '3–6 months' },
-  overstock: { label: 'Overstock',      color: '#78716c', note: '6–12 months' },
-  sleeping:  { label: 'Sleeping',       color: '#44403c', note: 'Over a year' },
-}
-
-function Stat({ icon: Icon, label, value, sub, tone = 'default' }) {
+/** A snapshot figure. Four of them, and only four — see section 5. */
+function Snapshot({ icon: Icon, label, value, sub, tone = 'neutral' }) {
   const tones = {
-    default: 'text-gray-900', bad: 'text-red-600', good: 'text-green-600',
+    neutral: 'text-slate-900', good: 'text-emerald-600',
+    warn: 'text-amber-600', bad: 'text-red-600',
   }
   return (
-    <div className="bg-white rounded-2xl border border-gray-200 p-4">
-      <div className="flex items-center gap-2 mb-2">
-        <Icon size={14} className="text-gray-400" />
-        <p className="text-[11px] font-medium text-gray-500 uppercase tracking-wide">{label}</p>
+    <Card className="p-5">
+      <div className="flex items-center gap-1.5 mb-2">
+        <Icon size={13} className="text-slate-400 shrink-0" />
+        <p className="text-[10px] font-medium text-slate-400 uppercase tracking-wide truncate">
+          {label}
+        </p>
       </div>
       <p className={`text-2xl font-bold tabular-nums ${tones[tone]}`}>{value}</p>
-      {sub && <p className="text-[11px] text-gray-400 mt-0.5">{sub}</p>}
-    </div>
+      {sub && <p className="text-[11px] text-slate-400 mt-0.5 truncate">{sub}</p>}
+    </Card>
   )
 }
 
 export default function Dashboard() {
+  const { user } = useAuth()
   const [bi, setBi] = useState(null)
-  const [trend, setTrend] = useState([])
-  const [campaign, setCampaign] = useState(null)
-  const [showAssumptions, setShowAssumptions] = useState(false)
-  const [showAllActions, setShowAllActions] = useState(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
 
-  // Named so it can be re-run after a setting changes — saving a gross margin
-  // re-values every figure on the page, and the server owns that arithmetic.
   const load = useCallback(async () => {
     try {
       const { data } = await intelligenceApi.all()
@@ -89,35 +83,48 @@ export default function Dashboard() {
       setError(err.response?.data?.detail ?? err.message
         ?? 'Could not load your business intelligence.')
     } finally { setLoading(false) }
-    // Supporting panels — never block the control centre if they fail
-    analyticsApi.trend().then((r) => setTrend(r.data)).catch(() => {})
-    analyticsApi.campaignSummary().then((r) => setCampaign(r.data)).catch(() => {})
   }, [])
 
   useEffect(() => { load() }, [load])
 
   if (loading) {
-    return <Layout><p className="text-sm text-gray-400">Analysing your business…</p></Layout>
-  }
-  if (error) {
     return (
       <Layout>
-        <div className="max-w-xl bg-red-50 text-red-600 rounded-xl p-4 text-sm">{error}</div>
+        <div className="max-w-4xl mx-auto space-y-5 animate-pulse">
+          <div className="h-52 bg-slate-100 rounded-3xl" />
+          <div className="h-32 bg-slate-100 rounded-3xl" />
+          <div className="h-28 bg-slate-100 rounded-3xl" />
+        </div>
       </Layout>
     )
   }
-  if (!bi || bi.empty) {
+
+  if (error) {
     return (
       <Layout>
-        <div className="max-w-lg mx-auto text-center py-16">
-          <Boxes size={40} className="text-gray-300 mx-auto mb-4" />
-          <h1 className="text-xl font-bold text-gray-900 mb-2">No data yet</h1>
-          <p className="text-sm text-gray-500 mb-6">
-            Upload a POS sales report and LiquorIQ will tell you where your cash is
-            sitting and what to do about it.
+        <div className="max-w-lg mx-auto bg-red-50 ring-1 ring-red-100 rounded-3xl p-6 text-center">
+          <p className="text-sm text-red-700">{error}</p>
+          <button onClick={load}
+            className="mt-4 text-xs font-semibold px-4 py-2 rounded-xl bg-red-600 text-white">
+            Try again
+          </button>
+        </div>
+      </Layout>
+    )
+  }
+
+  if (bi?.empty) {
+    return (
+      <Layout>
+        <div className="max-w-lg mx-auto text-center py-20">
+          <Upload size={30} className="mx-auto text-slate-300 mb-4" />
+          <h1 className="text-xl font-bold text-slate-900">Upload your first report</h1>
+          <p className="text-sm text-slate-500 mt-2 mb-6">
+            Export a sales summary from your POS and LiquorIQ will tell you what
+            to reorder, what to clear, and what to promote.
           </p>
           <Link to="/uploads"
-            className="inline-flex items-center gap-2 text-sm font-semibold px-5 py-2.5 rounded-xl bg-brand-500 text-white">
+            className="inline-flex items-center gap-2 text-sm font-semibold px-5 py-2.5 rounded-2xl bg-slate-900 text-white">
             Upload a report <ArrowRight size={15} />
           </Link>
         </div>
@@ -125,343 +132,205 @@ export default function Dashboard() {
     )
   }
 
-  const { headline, business_health: health, actions = [], opportunities = [],
-          summary = {}, categories = [], period = {}, coverage = {},
+  const { headline, business_health: health, actions = [], summary = {},
           valuation = {} } = bi
 
-  const classes = CLASS_ORDER
-    .filter((k) => summary.by_class?.[k])
-    .map((k) => ({ key: k, ...CLASS_META[k], ...summary.by_class[k] }))
-  const maxClassValue = Math.max(...classes.map((c) => c.value || 0), 1)
-  const visibleActions = showAllActions ? actions : actions.slice(0, 4)
-  const topCategories = categories.slice(0, 6)
-  const maxCatValue = Math.max(...topCategories.map((c) => c.inventory_value || 0), 1)
+  const opportunity = opportunityHeadline(bi)
+  const priorities = topPriorities(bi, 3)
+  const why = reasons(bi)
+  const brief = executiveSummary(bi)
+  const advice = coach(bi)
+  const firstName = (user?.full_name ?? '').trim().split(' ')[0] || 'there'
+
+  const RING = health.score >= 60 ? '#10b981' : health.score >= 40 ? '#f59e0b' : '#ef4444'
+  const outOfStock = summary.by_class?.sold_out?.count ?? 0
 
   return (
     <Layout>
-      <div className="max-w-6xl mx-auto space-y-6">
+      <div className="max-w-4xl mx-auto space-y-5 pb-12">
 
-        {/* ── Header ── */}
-        <div className="flex items-end justify-between gap-4 flex-wrap">
-          <div>
-            <h1 className="text-2xl font-bold text-gray-900">Business Control Center</h1>
-            <p className="text-sm text-gray-500">
-              {period.start && period.end
-                ? `Based on ${period.start} to ${period.end} (${period.days} days)`
-                : `Based on the last ${period.days} days`}
-              {period.estimated && ' · period estimated'}
-              {period.uploads > 0 && ` · ${period.uploads} upload${period.uploads === 1 ? '' : 's'}`}
-            </p>
+        {/* ═══ 1 · EXECUTIVE HERO ══════════════════════════════════════════ */}
+        <Card className="p-7 sm:p-9 bg-gradient-to-br from-slate-900 to-slate-800 ring-0">
+          <div className="flex items-start justify-between gap-6 flex-wrap">
+            <p className="text-[13px] text-slate-300">{greeting()}, {firstName} 👋</p>
+
+            {/* Health lives in the hero too, as a chip — the owner shouldn't
+                have to scroll to find out whether anything is on fire. */}
+            <span className="inline-flex items-center gap-2 text-[12px] font-semibold px-3 py-1.5 rounded-full bg-white/10 ring-1 ring-white/15">
+              <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: RING }} />
+              <span className="text-white">{Math.round(health.score)}/100</span>
+              <span className="text-slate-300 font-medium capitalize">{health.band}</span>
+            </span>
           </div>
-          <Link to="/uploads" className="text-xs font-semibold text-brand-600 hover:underline">
-            Upload newer data →
-          </Link>
-        </div>
 
-        {/* ── Insufficient-data banner ──
-            One upload is enough to see WHERE the cash is, but not enough to
-            know whether a product sells reliably. Saying so up front is more
-            useful than quietly labelling everything "medium confidence". */}
-        {(period.uploads <= 1 || period.estimated) && (
-          <div className="flex items-start gap-3 bg-amber-50 border border-amber-200 rounded-2xl p-4">
-            <Info size={16} className="text-amber-600 mt-0.5 shrink-0" />
-            <div className="text-xs text-amber-900">
-              <p className="font-semibold mb-0.5">
-                {period.uploads <= 1
-                  ? 'Working from a single reporting period'
-                  : 'This report did not state its date range'}
-              </p>
-              <p className="text-amber-800">
-                {period.uploads <= 1
-                  ? 'Stock levels and cash frozen are exact. Sales velocity is based on one period, so reorder timing is an estimate — upload again next week and confidence rises automatically.'
-                  : `Velocity is calculated against an assumed ${period.days}-day period. If that's wrong, reorder and overstock verdicts shift with it.`}
-              </p>
-            </div>
-          </div>
-        )}
+          <p className="text-[13px] text-slate-400 mt-6">
+            Acting on this week&rsquo;s recommendations is worth about
+          </p>
+          <p className="text-5xl sm:text-6xl font-bold text-white tracking-tight tabular-nums mt-1">
+            +{money(opportunity.value)}
+          </p>
 
-        {/* ── 1. How healthy is my business? ── */}
-        <HealthScore health={health} />
-
-        {/* ── 2. What is costing me money? ── */}
-        <MarginPrompt valuation={valuation} onSaved={load} />
-
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-          {/* Labels come from the server's valuation block, never from here.
-              These figures are RETAIL until the owner supplies his margin, and
-              "Cash frozen" over a retail number overstated what he had spent by
-              his entire margin — $220,661 shown for roughly $154,000 of cash. */}
-          <Stat icon={Boxes} label={valuation.inventory_label ?? 'Inventory value'}
-            value={money(valuation.inventory_headline ?? headline.inventory_value)}
-            sub={`${summary.products?.toLocaleString()} products`} />
-          <Stat icon={Snowflake} label={valuation.frozen_label ?? 'Cash frozen'}
-            value={money(valuation.frozen_headline ?? headline.cash_frozen)}
-            sub={`${headline.frozen_pct}% of inventory`} tone="bad" />
-          <Stat icon={Activity} label="Inventory turnover"
-            value={headline.turnover ? `${headline.turnover}×` : '—'}
-            sub="healthy is 4–6× a year"
-            tone={headline.turnover >= 4 ? 'good' : 'bad'} />
-          <Stat icon={TrendingUp} label="Opportunity on the table"
-            value={money(headline.opportunity_value)}
-            sub={`${money(headline.opportunity_value_adjusted)} confidence-adjusted`}
-            tone="good" />
-        </div>
-
-        {/* ── 3. What should I do today? ── */}
-        <section>
-          <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
-            <div>
-              <h2 className="text-lg font-bold text-gray-900">Today&rsquo;s Action Center</h2>
-              <p className="text-xs text-gray-500">
-                Ranked by financial impact × confidence, so a shaky big number
-                can&rsquo;t outrank a solid one.
-              </p>
-            </div>
-            <div className="flex items-center gap-1.5 text-[11px]">
-              {['P1', 'P2', 'P3'].map((p) => (
-                bi.priority_counts?.[p] > 0 && (
-                  <span key={p} className="px-2 py-1 rounded-lg bg-gray-100 text-gray-600 font-semibold">
-                    {bi.priority_counts[p]} × {p}
-                  </span>
-                )
+          {why.length > 0 && (
+            <div className="flex flex-wrap gap-2 mt-5">
+              {why.map((r) => (
+                <span key={r.text}
+                  className="text-[12px] font-medium px-3 py-1.5 rounded-full bg-white/10 text-slate-100 ring-1 ring-white/10">
+                  {r.text}
+                </span>
               ))}
             </div>
+          )}
+
+          <div className="flex items-center gap-3 mt-7 flex-wrap">
+            <Link to="/ai"
+              className="inline-flex items-center gap-2 text-[13px] font-semibold px-5 py-2.5 rounded-2xl bg-white text-slate-900 hover:bg-slate-100 transition-colors">
+              <Sparkles size={15} /> Generate campaign
+            </Link>
+            <a href="#priorities"
+              className="inline-flex items-center gap-2 text-[13px] font-semibold px-5 py-2.5 rounded-2xl bg-white/10 text-white ring-1 ring-white/15 hover:bg-white/15 transition-colors">
+              <ListChecks size={15} /> View action plan
+            </a>
           </div>
 
-          {actions.length === 0 ? (
-            <div className="bg-white rounded-2xl border border-gray-200 p-8 text-center">
-              <p className="text-sm text-gray-500">
-                Nothing urgent. Your stock levels look balanced.
+          {brief && (
+            <p className="text-[13px] leading-relaxed text-slate-300 mt-7 pt-6 border-t border-white/10 max-w-3xl">
+              {brief}
+            </p>
+          )}
+        </Card>
+
+        <MarginPrompt valuation={valuation} onSaved={load} />
+
+        {/* ═══ 2 · AI BUSINESS COACH ═══════════════════════════════════════ */}
+        {advice && (
+          <Card className="p-6 ring-brand-200/60 bg-gradient-to-br from-brand-50/40 to-white">
+            <div className="flex items-start gap-4">
+              <span className="w-9 h-9 rounded-2xl bg-brand-500/10 flex items-center justify-center shrink-0">
+                <MessageSquareQuote size={17} className="text-brand-600" />
+              </span>
+
+              <div className="min-w-0 flex-1 space-y-3">
+                <p className="text-[11px] font-semibold text-brand-700 uppercase tracking-wide">
+                  Your business coach
+                </p>
+
+                <p className="text-[15px] font-semibold text-slate-900 leading-snug">
+                  {advice.problem}.
+                </p>
+                <p className="text-[13px] text-slate-600 leading-relaxed">
+                  {advice.matters}
+                </p>
+                <p className="text-[13px] text-slate-800 leading-relaxed">
+                  <span className="font-semibold">What to do: </span>
+                  {advice.action}
+                  {advice.timeline && (
+                    <span className="text-slate-500"> — {advice.timeline.toLowerCase()}</span>
+                  )}
+                  <span className="text-slate-500">
+                    . Worth about <span className="font-semibold text-slate-800">{advice.impact}</span>,
+                    at {advice.confidence} confidence.
+                  </span>
+                </p>
+
+                <a href="#priorities"
+                  className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-brand-700 hover:text-brand-800">
+                  See the full plan <ArrowRight size={13} />
+                </a>
+              </div>
+            </div>
+          </Card>
+        )}
+
+        {/* ═══ 3 · BUSINESS HEALTH ═════════════════════════════════════════ */}
+        <Card className="p-6">
+          <div className="flex items-center gap-6 flex-wrap">
+            <div className="relative w-[88px] h-[88px] shrink-0">
+              <svg viewBox="0 0 100 100" className="w-[88px] h-[88px] -rotate-90">
+                <circle cx="50" cy="50" r="42" fill="none" stroke="#f1f5f9" strokeWidth="9" />
+                <circle cx="50" cy="50" r="42" fill="none" stroke={RING} strokeWidth="9"
+                  strokeLinecap="round" strokeDasharray={`${(health.score / 100) * 264} 264`} />
+              </svg>
+              <div className="absolute inset-0 flex flex-col items-center justify-center">
+                <span className="text-2xl font-bold text-slate-900 tabular-nums leading-none">
+                  {Math.round(health.score)}
+                </span>
+                <span className="text-[10px] text-slate-400">/ 100</span>
+              </div>
+            </div>
+
+            <div className="min-w-0 flex-1">
+              <p className="text-[11px] font-medium text-slate-400 uppercase tracking-wide">
+                Business health
+              </p>
+              <p className="text-[15px] font-bold text-slate-900 capitalize">{health.band}</p>
+              <p className="text-[13px] text-slate-500 mt-1">{health.verdict}</p>
+            </div>
+
+            <Link to="/intelligence"
+              className="text-[12px] font-semibold text-slate-500 hover:text-slate-900 shrink-0">
+              See what drives this →
+            </Link>
+          </div>
+        </Card>
+
+        {/* ═══ 4 · TOP 3 PRIORITIES ════════════════════════════════════════ */}
+        <section id="priorities" className="scroll-mt-6">
+          <div className="flex items-end justify-between gap-4 flex-wrap mb-4">
+            <div>
+              <h2 className="text-[15px] font-bold text-slate-900">Today’s top 3 priorities</h2>
+              <p className="text-[12px] text-slate-500 mt-0.5">
+                Ranked by money at stake × how confident we are in the number
               </p>
             </div>
+            {actions.length > 3 && (
+              <Link to="/intelligence#opportunities"
+                className="text-[12px] font-semibold text-slate-500 hover:text-slate-900">
+                All {actions.length} recommendations →
+              </Link>
+            )}
+          </div>
+
+          {priorities.length === 0 ? (
+            <Card className="p-10 text-center">
+              <p className="text-sm text-slate-500">
+                Nothing urgent — your stock levels look balanced.
+              </p>
+            </Card>
           ) : (
             <div className="space-y-3">
-              {visibleActions.map((a) => <ActionCard key={a.id} action={a} />)}
-              {actions.length > 4 && (
-                <button onClick={() => setShowAllActions(!showAllActions)}
-                  className="w-full text-xs font-semibold text-gray-500 hover:text-gray-800 py-2">
-                  {showAllActions
-                    ? 'Show fewer'
-                    : `Show ${actions.length - 4} more recommendation${actions.length - 4 === 1 ? '' : 's'}`}
-                </button>
-              )}
+              {priorities.map((a) => <ActionCard key={a.id} action={a} />)}
             </div>
           )}
         </section>
 
-        {/* ── 4. Inventory distribution — where the cash actually sits ── */}
-        <section className="bg-white rounded-2xl border border-gray-200 p-5">
-          <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
-            <div>
-              <h2 className="text-base font-bold text-gray-900">Inventory health</h2>
-              <p className="text-xs text-gray-500">
-                Every product placed by how long its stock will last
-              </p>
-            </div>
-            <Link to="/ai?focus=clearance"
-              className="text-xs font-semibold text-brand-600 hover:underline">
-              Act on the slow movers →
+        {/* ═══ 5 · QUICK SNAPSHOT — four figures, nothing else ═════════════ */}
+        <div>
+          <div className="flex items-end justify-between gap-4 mb-3">
+            <h2 className="text-[15px] font-bold text-slate-900">Quick snapshot</h2>
+            <Link to="/intelligence"
+              className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-slate-500 hover:text-slate-900">
+              <BarChart3 size={13} /> Business Intelligence
             </Link>
           </div>
 
-          <div className="space-y-2">
-            {classes.map((c) => (
-              <div key={c.key} className="flex items-center gap-3">
-                <span className="w-28 shrink-0 text-xs font-medium text-gray-700">{c.label}</span>
-                <div className="flex-1 h-6 bg-gray-50 rounded-md overflow-hidden">
-                  <div className="h-full rounded-md transition-all"
-                    style={{ width: `${Math.max((c.value / maxClassValue) * 100, 1.5)}%`,
-                             backgroundColor: c.color, opacity: 0.85 }} />
-                </div>
-                <span className="w-16 shrink-0 text-right text-xs font-semibold text-gray-900 tabular-nums">
-                  {compact(c.value)}
-                </span>
-                <span className="w-20 shrink-0 text-right text-[11px] text-gray-400 tabular-nums">
-                  {c.count} item{c.count === 1 ? '' : 's'}
-                </span>
-                <span className="hidden sm:block w-24 shrink-0 text-[10px] text-gray-400">{c.note}</span>
-              </div>
-            ))}
-          </div>
-        </section>
-
-        {/* ── 5. Category intelligence ── */}
-        <section className="bg-white rounded-2xl border border-gray-200 p-5">
-          <div className="flex items-center justify-between mb-1 flex-wrap gap-2">
-            <h2 className="text-base font-bold text-gray-900">Category intelligence</h2>
-            <span className="text-[11px] text-gray-400">
-              {coverage.resolved_pct}% of products categorised automatically
-            </span>
-          </div>
-          <p className="text-xs text-gray-500 mb-4">
-            Sorted by cash frozen — which part of the shop is holding your money
-          </p>
-
-          <div className="overflow-x-auto -mx-1">
-            <table className="w-full text-xs min-w-[620px]">
-              <thead>
-                <tr className="text-[10px] uppercase tracking-wide text-gray-400 border-b border-gray-100">
-                  <th className="text-left font-medium py-2 px-1">Category</th>
-                  <th className="text-right font-medium py-2 px-1">Revenue</th>
-                  <th className="text-right font-medium py-2 px-1">Inventory</th>
-                  <th className="text-right font-medium py-2 px-1">Cash frozen</th>
-                  <th className="text-left font-medium py-2 px-2 w-28">Frozen share</th>
-                  <th className="text-right font-medium py-2 px-1">Fast</th>
-                  <th className="text-right font-medium py-2 px-1">Slow</th>
-                  <th className="text-right font-medium py-2 px-1">Out</th>
-                </tr>
-              </thead>
-              <tbody>
-                {topCategories.map((c) => (
-                  <tr key={c.category} className="border-b border-gray-50 hover:bg-gray-50/60">
-                    <td className="py-2 px-1 font-semibold text-gray-800">{c.category}</td>
-                    <td className="py-2 px-1 text-right tabular-nums text-gray-700">{compact(c.revenue)}</td>
-                    <td className="py-2 px-1 text-right tabular-nums text-gray-700">{compact(c.inventory_value)}</td>
-                    <td className="py-2 px-1 text-right tabular-nums font-semibold text-red-600">
-                      {compact(c.cash_frozen)}
-                    </td>
-                    <td className="py-2 px-2">
-                      <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
-                        <div className="h-full bg-red-400 rounded-full"
-                          style={{ width: `${Math.min(c.frozen_pct, 100)}%` }} />
-                      </div>
-                      <span className="text-[10px] text-gray-400">{c.frozen_pct}%</span>
-                    </td>
-                    <td className="py-2 px-1 text-right tabular-nums text-green-600">{c.fast_movers}</td>
-                    <td className="py-2 px-1 text-right tabular-nums text-gray-500">{c.slow_movers}</td>
-                    <td className="py-2 px-1 text-right tabular-nums text-red-500">{c.sold_out}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </section>
-
-        {/* ── 6. Growth opportunities (ranked) ── */}
-        {opportunities.length > 0 && (
-          <section className="bg-white rounded-2xl border border-gray-200 p-5">
-            <h2 className="text-base font-bold text-gray-900 mb-1">Growth opportunities</h2>
-            <p className="text-xs text-gray-500 mb-4">
-              Ranked by estimated value × confidence
-            </p>
-            <div className="space-y-2">
-              {opportunities.map((o) => (
-                <div key={o.type}
-                  className="flex items-center gap-3 py-2 border-b border-gray-50 last:border-0">
-                  <span className="w-6 text-xs font-bold text-gray-300 tabular-nums">#{o.rank}</span>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-xs font-semibold text-gray-800 truncate">{o.title}</p>
-                    <p className="text-[10px] text-gray-400 truncate">{o.confidence_reason}</p>
-                  </div>
-                  <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded shrink-0 ${
-                    o.confidence === 'high' ? 'bg-green-50 text-green-700'
-                      : o.confidence === 'medium' ? 'bg-amber-50 text-amber-700'
-                      : 'bg-gray-100 text-gray-500'}`}>
-                    {o.confidence}
-                  </span>
-                  <span className="w-20 text-right text-sm font-bold text-gray-900 tabular-nums shrink-0">
-                    {compact(o.value_score)}
-                  </span>
-                </div>
-              ))}
-            </div>
-          </section>
-        )}
-
-        {/* ── 7. Revenue trend + campaign ROI ── */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-          <div className="lg:col-span-2 bg-white rounded-2xl border border-gray-200 p-5">
-            <h2 className="text-base font-bold text-gray-900 mb-3">Revenue trend</h2>
-            {trend.length > 1 ? (
-              <ResponsiveContainer width="100%" height={200}>
-                <AreaChart data={trend}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" />
-                  <XAxis dataKey="period" tick={{ fontSize: 11 }} stroke="#9ca3af" />
-                  <YAxis tick={{ fontSize: 11 }} stroke="#9ca3af"
-                    tickFormatter={(v) => compact(v)} />
-                  <Tooltip formatter={(v) => money(v)} />
-                  <Area type="monotone" dataKey="revenue" stroke="#e8a020"
-                    fill="#e8a020" fillOpacity={0.15} strokeWidth={2} />
-                </AreaChart>
-              </ResponsiveContainer>
-            ) : (
-              <div className="h-[200px] flex flex-col items-center justify-center text-center">
-                <Clock size={24} className="text-gray-300 mb-2" />
-                <p className="text-xs text-gray-500 max-w-xs">
-                  A single upload gives one data point. Upload weekly and this
-                  becomes a real trend — it also sharpens every reorder verdict.
-                </p>
-              </div>
-            )}
-          </div>
-
-          <div className="bg-white rounded-2xl border border-gray-200 p-5">
-            <h2 className="text-base font-bold text-gray-900 mb-3">Campaign ROI</h2>
-            {campaign?.revenue_lift != null ? (
-              <>
-                <p className="text-3xl font-bold text-green-600 tabular-nums">
-                  {money(campaign.revenue_lift)}
-                </p>
-                <p className="text-xs text-gray-500 mt-1">
-                  measured lift from {campaign.strategy_title || 'your last campaign'}
-                </p>
-                {campaign.units_lift_pct != null && (
-                  <p className="text-xs text-gray-400 mt-2">
-                    {campaign.units_lift_pct > 0 ? '▲' : '▼'} {Math.abs(campaign.units_lift_pct)}% units
-                    vs the pre-campaign baseline
-                  </p>
-                )}
-              </>
-            ) : (
-              <div className="py-6 text-center">
-                <p className="text-xs text-gray-500 mb-3">No campaign measured yet.</p>
-                <Link to="/ai" className="text-xs font-semibold text-brand-600 hover:underline">
-                  Generate a campaign →
-                </Link>
-              </div>
-            )}
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+            <Snapshot icon={Boxes} label={valuation.inventory_label ?? 'Inventory value'}
+              value={money(valuation.inventory_headline ?? headline.inventory_value)}
+              sub={`${summary.products?.toLocaleString()} products`} />
+            <Snapshot icon={Snowflake} label={valuation.frozen_label ?? 'Cash frozen'}
+              value={money(valuation.frozen_headline ?? headline.cash_frozen)}
+              sub={`${headline.frozen_pct}% of stock`}
+              tone={headline.frozen_pct >= 50 ? 'bad' : 'warn'} />
+            <Snapshot icon={Activity} label="Inventory turnover"
+              value={summary.turnover ? `${summary.turnover}×` : '—'}
+              sub="healthy is 4–6× a year"
+              tone={summary.turnover >= 4 ? 'good' : 'warn'} />
+            <Snapshot icon={PackageX} label="Products out of stock"
+              value={outOfStock.toLocaleString()}
+              sub="losing sales today"
+              tone={outOfStock > 0 ? 'bad' : 'good'} />
           </div>
         </div>
-
-        {/* ── Assumptions — every derived number is traceable ── */}
-        <section className="bg-white rounded-2xl border border-gray-200 p-5">
-          <button onClick={() => setShowAssumptions(!showAssumptions)}
-            className="w-full flex items-center justify-between text-left">
-            <span className="flex items-center gap-2">
-              <Info size={14} className="text-gray-400" />
-              <span className="text-sm font-semibold text-gray-700">
-                How these numbers were calculated
-              </span>
-            </span>
-            {showAssumptions ? <ChevronUp size={15} className="text-gray-400" />
-              : <ChevronDown size={15} className="text-gray-400" />}
-          </button>
-
-          {showAssumptions && (
-            <div className="mt-4 space-y-3">
-              <p className="text-xs text-gray-500">
-                Stock levels, sales rates and inventory values are measured directly
-                from your POS export. Your export contains no cost data, so anything
-                describing profit or a response rate uses the assumptions below —
-                stated openly rather than hidden inside a formula.
-              </p>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-1.5">
-                {bi.assumptions?.map((a) => (
-                  <div key={a.key} className="flex items-baseline justify-between gap-2 text-xs">
-                    <span className="text-gray-500">{a.label}</span>
-                    <span className="font-semibold text-gray-800">{a.value}</span>
-                  </div>
-                ))}
-              </div>
-              {bi.non_product_lines > 0 && (
-                <p className="text-[11px] text-gray-400 pt-2 border-t border-gray-100">
-                  {bi.non_product_lines} non-product line{bi.non_product_lines === 1 ? '' : 's'}
-                  {' '}(tips, delivery fees, bag tax) were excluded from inventory analysis.
-                </p>
-              )}
-            </div>
-          )}
-        </section>
       </div>
     </Layout>
   )
