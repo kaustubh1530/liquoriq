@@ -22,6 +22,17 @@ import {
 } from 'lucide-react'
 import { workspaceApi } from '../api/client'
 import Layout from '../components/Layout'
+import CampaignAdSection from './campaign/CampaignAdSection'
+
+/**
+ * PHASE 23.8 — steps that live ON this page rather than behind a link.
+ *
+ * The server still owns the pipeline and still hands every step its route; this
+ * map only says which of those routes the workspace now renders itself. A step
+ * listed here scrolls; anything else keeps linking out exactly as before, so
+ * adding a step server-side never leaves a dead square on the rail.
+ */
+const EMBEDDED = { ad: 'section-ad' }
 
 const STATUS_TONE = {
   draft: 'bg-slate-100 text-slate-600',
@@ -247,7 +258,20 @@ export default function CampaignWorkspace() {
               )
               const className = 'w-full flex items-center gap-3 rounded-xl px-3 py-2.5 text-left transition-colors'
 
-              // The link carries the campaign, so the tool opens on it.
+              // Embedded steps scroll to their section; the rest still link out
+              // with the campaign attached, so the tool opens on it.
+              const anchor = EMBEDDED[step.key]
+              if (anchor) {
+                return (
+                  <button key={step.key}
+                    onClick={() => document.getElementById(anchor)
+                      ?.scrollIntoView({ behavior: 'smooth' })}
+                    className={`${className} hover:bg-slate-50`}>
+                    {body}
+                  </button>
+                )
+              }
+
               return step.route ? (
                 <Link key={step.key}
                   to={`${step.route}?strategy=${state.strategy_id}`}
@@ -280,6 +304,10 @@ export default function CampaignWorkspace() {
             ))}
           </div>
         </section>
+
+        {/* The advertisement, generated here. Same hook, same form, same
+            payload as the standalone Ad Creator — see CampaignAdSection. */}
+        <CampaignAdSection strategyId={strategyId} onGenerated={load} />
 
         {/* Copy — every channel, editable, saved as overrides. */}
         <section className="bg-white rounded-3xl ring-1 ring-slate-200/70 p-6">
