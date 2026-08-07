@@ -6,6 +6,7 @@ PATCH /workspace/{strategy_id}/schedule choose when it goes out (preparation onl
 PATCH /workspace/{strategy_id}/status   move it through the lifecycle
 PATCH /workspace/{strategy_id}/copy     save an edit to generated copy
 GET   /workspace                        campaign history
+GET   /workspace/{strategy_id}/package  everything, zipped (Phase 23.8)
 
 NO NEW CALCULATIONS AND NO GPT CALLS. Everything is assembled from the
 CampaignContext plus assets that already exist.
@@ -15,7 +16,7 @@ import uuid
 from datetime import datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status as http
+from fastapi import APIRouter, Depends, HTTPException, Response, status as http
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -26,6 +27,7 @@ from app.models.campaign_workspace import (SCHEDULE_PRESETS, STATUSES,
                                            CampaignWorkspace)
 from app.models.store import Store
 from app.routes.stores import get_current_store
+from app.services import campaign_package as PKG
 from app.services import campaign_workspace as WS
 
 router = APIRouter()
@@ -90,6 +92,39 @@ async def workspace(
     state = await WS.build_state(strategy, ws, current_store.id, db)
     await db.commit()
     return state
+
+
+@router.get("/{strategy_id}/package", response_class=Response,
+            summary="Download the whole campaign as a ZIP")
+async def package(
+    strategy_id: uuid.UUID,
+    current_store: Annotated[Store, Depends(get_current_store)],
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    """
+    The ad, the labels, every piece of copy and a summary PDF, in one folder.
+
+    The ZIP is built from the SAME state object this page renders — see
+    services/campaign_package.py. It is a second rendering, never a second
+    opinion: an owner who found a different SMS in the ZIP than on the screen
+    would have no way to tell which one he had actually sent.
+
+    An incomplete campaign still packages. What is missing is named in the
+    README rather than refused, because withholding a man's own work until he
+    finishes it is not a feature.
+    """
+    strategy = await _strategy(strategy_id, current_store, db)
+    ws = await WS.get_or_create(strategy_id, current_store.id, db)
+    state = await WS.build_state(strategy, ws, current_store.id, db)
+    await db.commit()
+
+    assets = await PKG.collect_assets(strategy_id, current_store.id, db)
+    filename, blob = PKG.build(state, current_store.name or "Your store", assets)
+
+    return Response(
+        content=blob, media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 class ScheduleIn(BaseModel):

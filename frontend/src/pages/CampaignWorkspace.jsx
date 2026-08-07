@@ -18,7 +18,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import {
   ArrowLeft, ArrowRight, Check, Clock, Loader2, Sparkles, Calendar,
-  Copy as CopyIcon, CheckCircle2,
+  Copy as CopyIcon, CheckCircle2, Package,
 } from 'lucide-react'
 import { workspaceApi } from '../api/client'
 import Layout from '../components/Layout'
@@ -113,6 +113,27 @@ export default function CampaignWorkspace() {
     finally { setSavingSchedule('') }
   }
 
+  /**
+   * PHASE 23.8 — the campaign package.
+   *
+   * Downloadable at any point, not just when the bar reads 100%. Half a
+   * campaign is still the owner's work, and the README names what is missing
+   * rather than the button refusing to do anything.
+   */
+  const [packaging, setPackaging] = useState(false)
+  const [packageError, setPackageError] = useState('')
+  const downloadPackage = async () => {
+    setPackaging(true)
+    setPackageError('')
+    try {
+      await workspaceApi.downloadPackage(strategyId)
+    } catch {
+      // Kept local: a failed download must not replace the page the owner is
+      // working on with an error screen.
+      setPackageError('Could not build the package. Try again in a moment.')
+    } finally { setPackaging(false) }
+  }
+
   const saveCopy = async (channel, text) => {
     try {
       await workspaceApi.setCopy(strategyId, { channel, text })
@@ -152,11 +173,23 @@ export default function CampaignWorkspace() {
                 <p className="text-[13px] text-slate-500 mt-1">{summary.occasion}</p>
               )}
             </div>
-            <span className={`text-[11px] font-bold px-3 py-1.5 rounded-full capitalize ${
-              STATUS_TONE[status] ?? STATUS_TONE.draft}`}>
-              {status}
-            </span>
+            <div className="flex items-center gap-2 shrink-0">
+              <button onClick={downloadPackage} disabled={packaging}
+                title="The ad, the labels, every piece of copy and a summary PDF"
+                className="flex items-center gap-1.5 text-[12px] font-semibold px-3 py-1.5 rounded-xl ring-1 ring-slate-200 text-slate-700 hover:ring-slate-900 disabled:opacity-60">
+                {packaging ? <Loader2 size={13} className="animate-spin" />
+                           : <Package size={13} />}
+                {packaging ? 'Packaging…' : 'Download campaign'}
+              </button>
+              <span className={`text-[11px] font-bold px-3 py-1.5 rounded-full capitalize ${
+                STATUS_TONE[status] ?? STATUS_TONE.draft}`}>
+                {status}
+              </span>
+            </div>
           </div>
+          {packageError && (
+            <p className="text-[12px] text-red-600 mt-2">{packageError}</p>
+          )}
         </div>
 
         {/* Coach line — assembled from the strategy, not a model call. */}

@@ -131,6 +131,28 @@ async def _has_send(strategy_id, store_id, db) -> dict:
         return {"sms": False, "email": False, "count": 0}
 
 
+def resolve_copy(strategy, overrides: dict | None) -> dict:
+    """
+    The campaign's words: the AI's, with the owner's edits laid over them.
+
+    ONE function, because there is more than one renderer now. The workspace
+    screen and the downloadable package both show this copy, and if each merged
+    the overrides itself they would eventually disagree — the owner would edit
+    the SMS, see the edit on screen, and find the original in the ZIP he sent to
+    print. Overrides stay overrides: the AI's version is never overwritten.
+    """
+    overrides = overrides or {}
+    return {
+        "social": overrides.get("social") or getattr(strategy, "social_caption", ""),
+        "email_subject": overrides.get("email_subject")
+                         or getattr(strategy, "email_subject", ""),
+        "email": overrides.get("email") or getattr(strategy, "email_body", ""),
+        "sms": overrides.get("sms") or getattr(strategy, "sms_copy", ""),
+        "vivino": getattr(strategy, "vivino_listing", ""),
+        "edited": sorted(overrides.keys()),
+    }
+
+
 def _copy_present(strategy, channel: str, overrides: dict | None) -> bool:
     """Copy counts as done when the strategy produced it or the owner wrote it."""
     if (overrides or {}).get(channel):
@@ -196,15 +218,7 @@ async def build_state(strategy, workspace: CampaignWorkspace,
             "note": workspace.schedule_note,
             "options": schedule_options(),
         },
-        "copy": {
-            "social": overrides.get("social") or getattr(strategy, "social_caption", ""),
-            "email_subject": overrides.get("email_subject")
-                             or getattr(strategy, "email_subject", ""),
-            "email": overrides.get("email") or getattr(strategy, "email_body", ""),
-            "sms": overrides.get("sms") or getattr(strategy, "sms_copy", ""),
-            "vivino": getattr(strategy, "vivino_listing", ""),
-            "edited": sorted(overrides.keys()),
-        },
+        "copy": resolve_copy(strategy, overrides),
         "timeline": {
             "created": workspace.created_at.isoformat() if workspace.created_at else None,
             "updated": workspace.updated_at.isoformat() if workspace.updated_at else None,

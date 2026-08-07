@@ -325,6 +325,19 @@ export const workspaceApi = {
   setSchedule: (strategyId, body) => api.patch(`/workspace/${strategyId}/schedule`, body),
   setStatus: (strategyId, status) => api.patch(`/workspace/${strategyId}/status`, { status }),
   setCopy: (strategyId, body) => api.patch(`/workspace/${strategyId}/copy`, body),
+  // PHASE 23.8 — the whole campaign as a ZIP. Fetched with axios rather than a
+  // plain <a href> because the endpoint needs the auth and store headers, which
+  // a browser navigation would not send.
+  downloadPackage: async (strategyId) => {
+    const res = await api.get(`/workspace/${strategyId}/package`, { responseType: 'blob' })
+    const match = /filename="([^"]+)"/.exec(res.headers?.['content-disposition'] ?? '')
+    const url = URL.createObjectURL(res.data)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = match?.[1] ?? 'campaign.zip'
+    a.click()
+    URL.revokeObjectURL(url)
+  },
 }
 
 // ── MODULE 2: Label Studio ────────────────────────────────────────────────────
