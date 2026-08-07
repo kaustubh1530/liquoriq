@@ -315,6 +315,18 @@ export const advisorApi = {
   deleteConversation: (id) => api.delete(`/advisor/conversations/${id}`),
 }
 
+// ── PHASE 23.7: the Campaign Workspace ───────────────────────────────────────
+// One campaign as a project. Progress is computed server-side from the real
+// assets, so this client never derives it.
+
+export const workspaceApi = {
+  history: () => api.get('/workspace'),
+  get: (strategyId) => api.get(`/workspace/${strategyId}`),
+  setSchedule: (strategyId, body) => api.patch(`/workspace/${strategyId}/schedule`, body),
+  setStatus: (strategyId, status) => api.patch(`/workspace/${strategyId}/status`, { status }),
+  setCopy: (strategyId, body) => api.patch(`/workspace/${strategyId}/copy`, body),
+}
+
 // ── MODULE 2: Label Studio ────────────────────────────────────────────────────
 // Promotional badges only. Never calls the AI; only references a base image URL.
 

@@ -37,6 +37,7 @@ export default defineConfig({
       '/label-studio': backend,
       '/intelligence': backend,
       '/advisor':      backend,
+      '/workspace':    backend,
     },
   },
 })

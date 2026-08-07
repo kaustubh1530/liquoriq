@@ -9,6 +9,7 @@ import InventoryIntelligence from './pages/InventoryIntelligence'
 import CategoryIntelligence from './pages/CategoryIntelligence'
 import BusinessIntelligence from './pages/BusinessIntelligence'
 import AIAdvisor from './pages/AIAdvisor'
+import CampaignWorkspace from './pages/CampaignWorkspace'
 import Uploads from './pages/Uploads'
 import AIStrategy from './pages/AIStrategy'
 import Creative from './pages/Creative'
@@ -27,6 +28,7 @@ export default function App() {
 
           {/* Protected */}
           <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
+          <Route path="/campaign/:strategyId" element={<ProtectedRoute><CampaignWorkspace /></ProtectedRoute>} />
           <Route path="/advisor"     element={<ProtectedRoute><AIAdvisor /></ProtectedRoute>} />
           <Route path="/intelligence" element={<ProtectedRoute><BusinessIntelligence /></ProtectedRoute>} />
           <Route path="/inventory"  element={<ProtectedRoute><InventoryIntelligence /></ProtectedRoute>} />
