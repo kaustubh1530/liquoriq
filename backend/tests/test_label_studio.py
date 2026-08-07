@@ -356,3 +356,36 @@ def test_label_summary_uses_the_first_text_and_price():
     label = sl.build_from_style("classic", {"product_name": "Tito\'s", "price": "$21.99"})
     assert sl.label_summary(label).startswith("Tito")
     assert "$21.99" in sl.label_summary(label)
+
+
+# ── PHASE 23.8: a label can belong to a campaign ─────────────────────────────
+
+def test_a_label_can_belong_to_a_campaign():
+    from app.models.label_design import LabelDesign
+    assert "strategy_id" in LabelDesign.__table__.columns
+
+
+def test_the_campaign_link_is_optional():
+    """The Label Studio is also a standalone tool. A shelf tag for a bottle
+    nobody is running a campaign on is a real label, not an orphan."""
+    from app.models.label_design import LabelDesign
+    assert LabelDesign.__table__.columns["strategy_id"].nullable is True
+
+
+def test_deleting_a_campaign_does_not_delete_the_printed_label():
+    """SET NULL, not CASCADE. A label is a physical card clipped to a shelf —
+    deleting the strategy that inspired it must not delete the design of
+    something still hanging up in the aisle."""
+    from app.models.label_design import LabelDesign
+    fks = list(LabelDesign.__table__.columns["strategy_id"].foreign_keys)
+    assert len(fks) == 1
+    assert fks[0].column.table.name == "ai_strategy_reports"
+    assert fks[0].ondelete == "SET NULL"
+
+
+def test_the_campaign_is_recorded_at_creation_not_inferred():
+    """The only moment we honestly know which campaign a label was made for is
+    the moment the owner made it from inside that campaign."""
+    import inspect
+    from app.services import label_design_service as svc
+    assert "strategy_id" in inspect.signature(svc.create_label).parameters

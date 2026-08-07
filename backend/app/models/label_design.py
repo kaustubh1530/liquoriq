@@ -45,6 +45,20 @@ class LabelDesign(Base):
         UUID(as_uuid=True), ForeignKey("ad_creatives.id", ondelete="SET NULL"),
         nullable=True, index=True,
     )
+    # PHASE 23.8 — which campaign this label was made for.
+    #
+    # NULLABLE because the Label Studio is also a standalone tool: a shelf tag
+    # for a bottle nobody is running a campaign on is a real label, not an
+    # orphan. SET NULL for the same reason as creative_id, only more so — a
+    # label is a physical card on a shelf, and deleting the strategy that
+    # inspired it must not delete the design of something still hanging up.
+    #
+    # This is what lets the workspace's labels step ask "labels for THIS
+    # campaign?" instead of "any labels at all?".
+    strategy_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("ai_strategy_reports.id", ondelete="SET NULL"),
+        nullable=True, index=True,
+    )
 
     name: Mapped[str] = mapped_column(String(200), nullable=False, default="Untitled design")
     # Optional: only set for overlay-style designs. Shelf labels draw their own

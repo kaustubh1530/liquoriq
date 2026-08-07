@@ -26,14 +26,37 @@ from app.services.storage_service import save_image
 logger = logging.getLogger(__name__)
 
 
-async def list_labels(store_id: uuid.UUID, db: AsyncSession) -> list[LabelDesign]:
-    """This store's saved labels (not templates), most recently edited first."""
-    result = await db.execute(
+async def list_labels(
+    store_id: uuid.UUID, db: AsyncSession, strategy_id: uuid.UUID | None = None
+) -> list[LabelDesign]:
+    """
+    This store's saved labels (not templates), most recently edited first.
+
+    With `strategy_id`, only the labels made for that campaign. Filtering here
+    rather than in the caller keeps the store scope and the campaign scope in
+    the same WHERE clause — they are both auth-shaped and both easy to forget.
+    """
+    query = (
         select(LabelDesign)
         .where(LabelDesign.store_id == store_id, LabelDesign.is_template.is_(False))
         .order_by(LabelDesign.updated_at.desc())
     )
+    if strategy_id is not None:
+        query = query.where(LabelDesign.strategy_id == strategy_id)
+    result = await db.execute(query)
     return list(result.scalars().all())
+
+
+async def count_labels(
+    store_id: uuid.UUID, db: AsyncSession, strategy_id: uuid.UUID | None = None
+) -> int:
+    """How many saved labels — for one campaign, or for the whole store."""
+    query = select(func.count(LabelDesign.id)).where(
+        LabelDesign.store_id == store_id, LabelDesign.is_template.is_(False)
+    )
+    if strategy_id is not None:
+        query = query.where(LabelDesign.strategy_id == strategy_id)
+    return int((await db.execute(query)).scalar_one() or 0)
 
 
 async def list_templates(store_id: uuid.UUID, db: AsyncSession) -> list[LabelDesign]:
@@ -86,14 +109,23 @@ async def get_label(label_id: uuid.UUID, store_id: uuid.UUID, db: AsyncSession) 
 
 
 async def create_label(
-    store_id: uuid.UUID, db: AsyncSession, spec: dict | None = None
+    store_id: uuid.UUID, db: AsyncSession, spec: dict | None = None,
+    strategy_id: uuid.UUID | None = None,
 ) -> LabelDesign:
+    """
+    A new label, optionally belonging to a campaign.
+
+    `strategy_id` is recorded at CREATION and never inferred later: the only
+    moment we honestly know which campaign a label was made for is the moment
+    the owner made it from inside that campaign.
+    """
     label = validate_label(spec) if spec else blank_label()
     row = LabelDesign(
         store_id=store_id,
         name=label_summary(label)[:200],
         base_image_url=None,          # shelf labels draw their own background
         design_json=label,
+        strategy_id=strategy_id,
     )
     db.add(row)
     await db.commit()

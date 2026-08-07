@@ -82,21 +82,39 @@ async def _has_creative(strategy_id, store_id, db) -> dict:
         return {"done": False, "detail": ""}
 
 
-async def _has_labels(store_id, db) -> dict:
+def _labels_step(linked: int, unlinked: int) -> dict:
     """
-    Labels are not linked to a strategy in the schema, so this reports whether
-    the shop has ANY saved label design — an honest weaker signal, stated as
-    such rather than dressed up as campaign-specific.
+    The labels step, from two counts.
+
+    PHASE 23.8 — this used to be the one dishonest square on the bar. Labels had
+    no strategy_id, so the step could only ask "does this shop have ANY saved
+    label?", and a tag made for July's clearance ticked off June's Father's Day
+    campaign. The migration gave labels a campaign, so the step now asks the
+    question it always meant to ask, and `weak` is gone with it.
+
+    Labels the owner made before the migration (or outside any campaign) still
+    count for something — they are mentioned, because "you have 6 labels, none
+    of them on this campaign" is useful — but they never mark the step done.
+    Pure, so the wording is testable without a database.
     """
+    if linked:
+        return {"done": True,
+                "detail": f"{linked} label{'s' if linked != 1 else ''} for this campaign"}
+    if unlinked:
+        return {"done": False,
+                "detail": f"{unlinked} saved in Label Studio, none for this campaign"}
+    return {"done": False, "detail": ""}
+
+
+async def _has_labels(strategy_id, store_id, db) -> dict:
+    """Labels made FOR THIS CAMPAIGN — since Phase 23.8, a real signal."""
     try:
-        from app.models.label_design import LabelDesign
-        count = len((await db.execute(
-            select(LabelDesign.id).where(LabelDesign.store_id == store_id).limit(1)
-        )).scalars().all())
-        return {"done": count > 0,
-                "detail": "labels exist in Label Studio" if count else "",
-                "weak": True}
-    except Exception:  # noqa: BLE001
+        from app.services import label_design_service as LABELS
+        linked = await LABELS.count_labels(store_id, db, strategy_id)
+        total = await LABELS.count_labels(store_id, db)
+        return _labels_step(linked, total - linked)
+    except Exception:  # noqa: BLE001 — an unreadable step reports "not done"
+        logger.warning("Could not read the labels step", exc_info=True)
         return {"done": False, "detail": ""}
 
 
@@ -135,7 +153,7 @@ async def build_state(strategy, workspace: CampaignWorkspace,
     overrides = workspace.copy_overrides or {}
 
     ad = await _has_creative(strategy.id, store_id, db)
-    labels = await _has_labels(store_id, db)
+    labels = await _has_labels(strategy.id, store_id, db)
     sends = await _has_send(strategy.id, store_id, db)
 
     done = {

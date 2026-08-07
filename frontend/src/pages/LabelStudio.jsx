@@ -17,7 +17,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useLocation } from 'react-router-dom'
+import { useLocation, useSearchParams } from 'react-router-dom'
 import { labelStudioApi, assetUrl } from '../api/client'
 import Layout from '../components/Layout'
 import FromActionBanner from '../components/FromActionBanner'
@@ -64,6 +64,18 @@ export default function LabelStudio() {
    */
   const location = useLocation()
   const applied = useRef(false)
+
+  /**
+   * PHASE 23.8 — arriving from a campaign (`?strategy=…`).
+   *
+   * The id is read from the URL rather than held in state, for the same reason
+   * as the Ad Creator: React Router reuses this component, so state seeded once
+   * would keep stamping labels with the PREVIOUS campaign after navigating here
+   * from a different one. The library below still shows every label — this only
+   * decides what a NEW label is stamped with.
+   */
+  const [searchParams] = useSearchParams()
+  const campaignId = searchParams.get('strategy')
 
   useEffect(() => {
     const from = location.state?.fromAction
@@ -208,7 +220,7 @@ export default function LabelStudio() {
     try {
       const { data } = current
         ? await labelStudioApi.save(current.id, spec)
-        : await labelStudioApi.create(spec)
+        : await labelStudioApi.create(spec, campaignId)
       setCurrent(data); setSpec(data.design_json)
       setLabels((ls) => [data, ...ls.filter((l) => l.id !== data.id)])
     } catch (e) { setError(e.response?.data?.detail ?? 'Could not save.') }
@@ -324,6 +336,11 @@ export default function LabelStudio() {
             <p className="text-sm text-gray-500">
               Click a piece to edit it · drag to move · Delete key removes it
             </p>
+            {campaignId && (
+              <p className="text-[11px] font-medium text-brand-600 mt-1.5">
+                Labels you save here count towards this campaign.
+              </p>
+            )}
           </div>
           <div className="flex items-center gap-2">
             <button onClick={undo} disabled={!history.length} title="Undo (⌘Z)"

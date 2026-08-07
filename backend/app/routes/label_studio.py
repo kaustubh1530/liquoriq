@@ -185,9 +185,11 @@ async def preview(
 @router.get("/labels", response_model=list[LabelOut], summary="Your saved labels")
 async def list_labels(
     current_store: Annotated[Store, Depends(get_current_store)],
+    strategy_id: uuid.UUID | None = None,
     db: AsyncSession = Depends(get_db),
 ):
-    return await svc.list_labels(current_store.id, db)
+    """All of this store's labels, or — with `strategy_id` — one campaign's."""
+    return await svc.list_labels(current_store.id, db, strategy_id)
 
 
 @router.post("/labels", response_model=LabelOut, status_code=status.HTTP_201_CREATED,
@@ -197,7 +199,7 @@ async def create_label(
     current_store: Annotated[Store, Depends(get_current_store)],
     db: AsyncSession = Depends(get_db),
 ):
-    return await svc.create_label(current_store.id, db, body.spec)
+    return await svc.create_label(current_store.id, db, body.spec, body.strategy_id)
 
 
 @router.get("/labels/{label_id}", response_model=LabelOut, summary="Reopen a label")

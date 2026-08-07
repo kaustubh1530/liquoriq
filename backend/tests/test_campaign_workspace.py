@@ -95,6 +95,56 @@ def test_whitespace_is_not_copy():
     assert WS._copy_present(s, "social", None) is False
 
 
+# ── The labels step (PHASE 23.8) ─────────────────────────────────────────────
+#
+# Before the migration, labels had no strategy_id, so the step could only ask
+# "does this shop have ANY saved label?" — a tag made for July's clearance
+# ticked off June's Father's Day campaign. It now asks about this campaign.
+
+def test_labels_made_for_this_campaign_complete_the_step():
+    step = WS._labels_step(linked=2, unlinked=0)
+    assert step["done"] is True
+    assert "2 labels" in step["detail"]
+
+
+def test_one_label_is_not_called_two():
+    assert "1 label for" in WS._labels_step(linked=1, unlinked=5)["detail"]
+
+
+def test_someone_elses_labels_never_complete_this_campaign():
+    """The whole point of the migration. A label made for another campaign —
+    or before there were campaigns — is not this campaign's work."""
+    step = WS._labels_step(linked=0, unlinked=6)
+    assert step["done"] is False
+    assert "none for this campaign" in step["detail"]
+
+
+def test_unlinked_labels_are_still_mentioned():
+    """"You have 6, none on this campaign" tells the owner where to look;
+    silence would read as "you have no labels", which is false."""
+    assert "6" in WS._labels_step(linked=0, unlinked=6)["detail"]
+
+
+def test_no_labels_at_all_says_nothing_rather_than_zero():
+    assert WS._labels_step(linked=0, unlinked=0) == {"done": False, "detail": ""}
+
+
+def test_the_labels_step_no_longer_claims_to_be_weak():
+    """`weak: true` was Phase 23.7 being honest about a signal it could not
+    fix. The migration fixed it, so the apology has to go too — a flag saying
+    "don't trust this" outliving the reason is its own kind of lie."""
+    for linked, unlinked in [(0, 0), (0, 4), (3, 0), (3, 4)]:
+        assert "weak" not in WS._labels_step(linked, unlinked)
+
+
+def test_the_labels_step_is_scoped_to_the_strategy():
+    import inspect
+    source = inspect.getsource(WS._has_labels)
+    assert "strategy_id" in source
+    source = inspect.getsource(WS.build_state)
+    assert "_has_labels(strategy.id" in source
+
+
 # ── The coach line ───────────────────────────────────────────────────────────
 
 def test_the_coach_line_names_what_is_left_to_do():

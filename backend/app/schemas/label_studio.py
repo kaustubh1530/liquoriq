@@ -10,6 +10,10 @@ class LabelIn(BaseModel):
     """The label spec. Loosely typed on purpose — shelf_label.validate_label()
     is the single source of truth for coercion, so the rules live in one place."""
     spec: dict = Field(default_factory=dict)
+    # PHASE 23.8: set when the label is made from inside a campaign. Optional —
+    # the Label Studio is also a standalone tool.
+    strategy_id: uuid.UUID | None = Field(
+        default=None, description="The campaign this label belongs to, if any")
 
 
 class SheetIn(BaseModel):
@@ -36,6 +40,7 @@ class ApplyTemplateIn(BaseModel):
 class LabelOut(BaseModel):
     id: uuid.UUID
     store_id: uuid.UUID
+    strategy_id: uuid.UUID | None = None
     name: str
     design_json: dict
     final_image_url: str | None = None

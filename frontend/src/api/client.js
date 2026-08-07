@@ -342,8 +342,12 @@ export const labelStudioApi = {
   deleteTemplate: (templateId) => api.delete(`/label-studio/templates/${templateId}`),
   // Best sellers + latest price from the store's OWN sales data (one-click prefill)
   products: () => api.get('/label-studio/products'),
-  list: () => api.get('/label-studio/labels'),
-  create: (spec) => api.post('/label-studio/labels', { spec }),
+  // PHASE 23.8: a label can belong to a campaign. Pass a strategyId to list
+  // only that campaign's labels, or to stamp a new one with it.
+  list: (strategyId = null) =>
+    api.get('/label-studio/labels', { params: { strategy_id: strategyId || undefined } }),
+  create: (spec, strategyId = null) =>
+    api.post('/label-studio/labels', { spec, strategy_id: strategyId || null }),
   get: (labelId) => api.get(`/label-studio/labels/${labelId}`),
   save: (labelId, spec) => api.put(`/label-studio/labels/${labelId}`, { spec }),
   remove: (labelId) => api.delete(`/label-studio/labels/${labelId}`),
