@@ -23,6 +23,7 @@ import {
 import { workspaceApi } from '../api/client'
 import Layout from '../components/Layout'
 import CampaignAdSection from './campaign/CampaignAdSection'
+import CampaignLabelsSection from './campaign/CampaignLabelsSection'
 
 /**
  * PHASE 23.8 — steps that live ON this page rather than behind a link.
@@ -32,7 +33,7 @@ import CampaignAdSection from './campaign/CampaignAdSection'
  * listed here scrolls; anything else keeps linking out exactly as before, so
  * adding a step server-side never leaves a dead square on the rail.
  */
-const EMBEDDED = { ad: 'section-ad' }
+const EMBEDDED = { ad: 'section-ad', labels: 'section-labels' }
 
 const STATUS_TONE = {
   draft: 'bg-slate-100 text-slate-600',
@@ -308,6 +309,10 @@ export default function CampaignWorkspace() {
         {/* The advertisement, generated here. Same hook, same form, same
             payload as the standalone Ad Creator — see CampaignAdSection. */}
         <CampaignAdSection strategyId={strategyId} onGenerated={load} />
+
+        {/* The shelf labels for this campaign — the same editor as the Label
+            Studio page, scoped by the strategy_id the migration added. */}
+        <CampaignLabelsSection strategyId={strategyId} onSaved={load} />
 
         {/* Copy — every channel, editable, saved as overrides. */}
         <section className="bg-white rounded-3xl ring-1 ring-slate-200/70 p-6">
